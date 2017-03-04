@@ -10,23 +10,18 @@ f=dostat
 . netfilelib.rc $1
 
 fn dostat {
-	echo cd $2 | runsftp $1
-	if(9 test -e $t.sftp -a ! -s $t.sftp){
-		echo directory
-		exit 0
-	}
-	if(9 grep -s 'Can''t change directory|is not a directory' $t.sftp){
-		echo file
-		exit 0
-	}
-	if(9 grep -s 'Couldn''t stat remote file|such file' $t.sftp){
+	if(! ssh $1 test -e $2){
 		echo nonexistent
 		exit 0
 	}
-	{
-		echo unknown error:
-		sed 's/^/	/' $t.sftp 
-	} >[1=2]
+	if(ssh $1 test -d $2){
+		echo directory
+		exit 0
+	}
+	if(ssh $1 test -f $2){
+		echo file
+		exit 0
+	}
 	exit 0
 }
 
