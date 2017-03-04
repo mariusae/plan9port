@@ -654,6 +654,34 @@ textcomplete(Text *t)
 }
 
 void
+xtextscroll(Text *t, int n)
+{
+	uint q0;
+	
+	//fprint(2, "textscroll %d\n", n);
+
+	if(n == 0)
+		return;
+
+	if(t->what == Tag){
+		if(n<0)
+			texttype(t, Kscrolloneup);
+		else
+			texttype(t, Kscrollonedown);
+		return;
+	}
+	
+	if(n < 0){
+		n = -n;
+		q0 = t->org+frcharofpt(&t->fr, Pt(t->fr.r.min.x, t->fr.r.min.y+n*t->fr.font->height));
+		textsetorigin(t, q0, TRUE);
+	}else{
+		q0 = textbacknl(t, t->org, n);
+		textsetorigin(t, q0, TRUE);
+	}
+}
+
+void
 texttype(Text *t, Rune r)
 {
 	uint q0, q1;

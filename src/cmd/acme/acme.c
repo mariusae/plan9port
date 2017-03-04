@@ -162,7 +162,7 @@ threadmain(int argc, char *argv[])
 		threadexitsall("geninitdraw");
 	}
 */
-	if(initdraw(derror, fontnames[0], "acme") < 0){
+	if(initdraw(derror, fontnames[0], "ACME") < 0){
 		fprint(2, "acme: can't open display: %r\n");
 		threadexitsall("initdraw");
 	}
@@ -614,6 +614,14 @@ mousethread(void *v)
 			}
 			/* scroll buttons, wheels, etc. */
 			if(w != nil && (m.buttons & (8|16))){
+				if((m.buttons >> 1) != 0){
+					winlock(w, 'M');
+					t->eq0 = ~0;
+					xtextscroll(t, m.buttons>>1);
+					winunlock(w);
+					goto Continue;
+				}
+
 				if(m.buttons & 8)
 					but = Kscrolloneup;
 				else
