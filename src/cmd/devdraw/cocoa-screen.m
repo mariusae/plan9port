@@ -62,8 +62,11 @@ int usegestures = 0;
 int useliveresizing = 0;
 int useoldfullscreen = 0;
 int usebigarrow = 0;
+int pressurestage = 0; 
+int stagebuttons = 0;
 
 static void setprocname(const char*);
+static void sendclick(int); 
 
 /*
  * By default, devdraw uses retina displays.
@@ -378,6 +381,8 @@ enum
 		| NSClosableWindowMask
 		| NSMiniaturizableWindowMask
 		| NSResizableWindowMask
+//		| NSTexturedBackgroundWindowMask
+//		| NSFullSizeContentViewWindowMask
 };
 
 static void
@@ -385,6 +390,7 @@ makewin(char *s)
 {
 	NSRect r, sr;
 	NSWindow *w;
+	NSVisualEffectView *vis;
 	Rectangle wr;
 	int i, set;
 
@@ -412,6 +418,17 @@ makewin(char *s)
 		backing:NSBackingStoreBuffered defer:NO];
 	[w setTitle:@"devdraw"];
 
+//	w.titleVisibility = NSWindowTitleHidden;
+	w.titlebarAppearsTransparent = YES;
+//	w.styleMask |= NSFullSizeContentViewWindowMask;
+
+	w.appearance = [NSAppearance appearanceNamed:NSAppearanceNameVibrantLight];
+
+        vis = [[NSVisualEffectView new] initWithFrame:NSMakeRect(0, 0, r.size.width, r.size.height)];
+        vis.material = NSVisualEffectMaterialAppearanceBased  ;  //Dark,MediumLight,PopOver,UltraDark,AppearanceBased,Titlebar,Menu
+        vis.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+        vis.state = NSVisualEffectStateActive;
+
 	if(!set)
 		[w center];
 #if OSX_VERSION >= 100700
@@ -436,6 +453,9 @@ makewin(char *s)
 	win.isofs = 0;
 	win.content = [contentview new];
 	[WIN setContentView:win.content];
+//	[[WIN contentView] setWantsLayer:YES];
+	[[WIN contentView] setAllowsVibrancy:YES];
+//        [[WIN contentView] addSubview:vis];
 
 	topwin();
 }
@@ -681,6 +701,7 @@ drawimg(NSRect dr, uint op)
 
 	LOG(@"dr: %f %f %f %f\n", dr.origin.x, dr.origin.y, dr.size.width, dr.size.height);
 	LOG(@"sr: %f %f %f %f\n", sr.origin.x, sr.origin.y, sr.size.width, sr.size.height);
+
 	if(OSX_VERSION >= 100800){
 		i = CGImageCreateWithImageInRect([win.img CGImage], NSRectToCGRect(dr));
 		c = [[WIN graphicsContext] graphicsPort];
@@ -760,6 +781,7 @@ static void updatecursor(void);
 	else
 		waitimg(500);
 }
+
 - (BOOL)isFlipped
 {
 	return YES;	/* to make the content's origin top left */
@@ -816,6 +838,37 @@ static void updatecursor(void);
 {
 	gettouch(e, NSTouchPhaseCancelled);
 }
+
+ 
+- (void)pressureChangeWithEvent:(NSEvent *)e 
+{ 
+        if(pressurestage == 1 && e.stage == 2){ 
+                switch(stagebuttons = in.mbuttons){ 
+                case 1: 
+                        in.mbuttons = 0; 
+                        sendmouse(); 
+                        in.mbuttons = 4; 
+                        sendmouse(); 
+                        break; 
+                case 2: 
+                        in.mbuttons |= 1; 
+                        sendmouse(); 
+                default: 
+                        break; 
+                } 
+        }else if(pressurestage == 2 && e.stage == 1){ 
+                if(stagebuttons != 0){ 
+                        in.mbuttons = 0; 
+                        sendmouse(); 
+                        in.mbuttons = stagebuttons; 
+                } 
+                stagebuttons = 0; 
+        } 
+ 
+        pressurestage = e.stage; 
+} 
+
+
 @end
 
 static int keycvt[] =
@@ -1021,7 +1074,8 @@ static void
 getmouse(NSEvent *e)
 {
 	float d;
-	int b, m;
+	int b, m, i;
+	static int accum;
 
 	if([WIN isKeyWindow] == 0)
 		return;
@@ -1057,11 +1111,17 @@ getmouse(NSEvent *e)
 #else
 		d = [e deltaY];
 #endif
+
+		if((short)d==0) 
+			return;
+
 		if(d>0)
 			in.mscroll = 8;
 		else
 		if(d<0)
 			in.mscroll = 16;
+
+		in.mscroll |= ((short)d)<<1;
 		break;
 
 	case NSMouseMoved:
