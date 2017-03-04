@@ -1,0 +1,29 @@
+#!/bin/bash -i
+
+cd $HOME
+. ~/.bash_profile
+
+export PLAN9=${PLAN9:-/usr/local/plan9}
+export NAMESPACE=/tmp/ns.$USER.default
+mkdir -p $NAMESPACE
+
+if $PLAN9/bin/9p stat acme >/dev/null 2>&1; then
+  NAMESPACE=/tmp/ns.$USER.$RANDOM
+  export NAMESPACE
+  mkdir -p $NAMESPACE
+else
+  rm -f $(namespace)/acme
+fi
+
+export NAMESPACE=$(9 namespace)
+
+/Users/marius/bin/darwin/acme
+# acme
+
+# case $(backingscale) in
+# 1)	acme ;;
+# *)	acme -f /usr/local/plan9/font/lucsans/euro.8d.font -F /usr/local/plan9/font/lucm/unicode.9d.font
+# esac
+
+#export acmedump=$HOME/acme.$(backingscale).dump
+#startacme
