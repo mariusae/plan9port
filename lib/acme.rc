@@ -40,3 +40,22 @@ fn windel {
 fn wineventloop {
 	. <{winread event >[2]/dev/null | acmeevent}
 }
+
+fn arg {
+        if(~ $#* 0){
+                winctl 'addr=dot'
+                winread xdata
+        }
+        if not{
+                echo $"*
+        }
+}
+
+fn samfile {
+        if(~ $#winid 0){
+                echo /dev/null
+        }
+        if not {
+                9p read acme/$winid/tag | sed 1q | take 1       
+        }
+}
