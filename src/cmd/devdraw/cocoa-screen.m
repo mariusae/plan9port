@@ -820,6 +820,10 @@ static void updatecursor(void);
 - (void)flagsChanged:(NSEvent*)e{ getkeyboard(e);}
 
 - (void)magnifyWithEvent:(NSEvent*)e{ getgesture(e);}
+- (void)swipeWithEvent:(NSEvent *)e{ 
+	getgesture(e); 
+}
+- (void)smartMagnifyWithEvent:(NSEvent *)e{ getgesture(e); }
 
 - (void)touchesBeganWithEvent:(NSEvent*)e
 {
@@ -1143,6 +1147,13 @@ getgesture(NSEvent *e)
 		if(fabs([e magnification]) > Minpinch)
 			togglefs();
 		break;
+	case NSEventTypeSmartMagnify:
+		sendclick(2);
+		break;
+	case NSEventTypeSwipe:	
+		fprint(2, "swipe %f %f\n", [e deltaX], [e deltaY]);
+		if([e deltaX] > 0)		/* left swipe */
+			keystroke(Kcmd+'z');
 	}
 }
 
@@ -1166,7 +1177,7 @@ gettouch(NSEvent *e, int type)
 	case NSTouchPhaseBegan:
 		p = NSTouchPhaseTouching;
 		set = [e touchesMatchingPhase:p inView:nil];
-		if(set.count == 3){
+		if(set.count == 3 || set.count == 2){
 			tapping = 1;
 			taptime = msec();
 		}else
