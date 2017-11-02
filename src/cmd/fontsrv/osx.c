@@ -126,8 +126,24 @@ fontheight(XFont *f, int size, int *height, int *ascent)
 	CFRelease(s);
 	if(desc == nil)
 		return;
-	font = CTFontCreateWithFontDescriptor(desc, 0, nil);
+	
+// Set up OpenType Attributes
+CFAllocatorRef defaultAllocator = CFAllocatorGetDefault();
+
+int numberSpacing = kNumberSpacingType;
+int numberSpacingType = kMonospacedNumbersSelector;
+
+CFNumberRef numberSpacingId = CFNumberCreate(defaultAllocator, kCFNumberIntType, &numberSpacing);
+CFNumberRef monospacedNumbersSelector = CFNumberCreate(defaultAllocator, kCFNumberIntType, &numberSpacingType);
+
+CTFontDescriptorRef desc2 = CTFontDescriptorCreateCopyWithFeature(desc, numberSpacingId, monospacedNumbersSelector);
+
+	font = CTFontCreateWithFontDescriptor(desc2, 0, nil);
 	CFRelease(desc);
+	CFRelease(desc2);
+
+CFRelease(numberSpacingId);
+CFRelease(monospacedNumbersSelector);
 	if(font == nil)
 		return;
 
@@ -227,8 +243,25 @@ mksubfont(XFont *f, char *name, int lo, int hi, int size, int antialias)
 	CFRelease(s);
 	if(desc == nil)
 		return nil;
-	font = CTFontCreateWithFontDescriptor(desc, 0, nil);
+
+// Set up OpenType Attributes
+CFAllocatorRef defaultAllocator = CFAllocatorGetDefault();
+
+int numberSpacing = kNumberSpacingType;
+int numberSpacingType = kMonospacedNumbersSelector;
+
+CFNumberRef numberSpacingId = CFNumberCreate(defaultAllocator, kCFNumberIntType, &numberSpacing);
+CFNumberRef monospacedNumbersSelector = CFNumberCreate(defaultAllocator, kCFNumberIntType, &numberSpacingType);
+
+CTFontDescriptorRef desc2 = CTFontDescriptorCreateCopyWithFeature(desc, numberSpacingId, monospacedNumbersSelector);
+
+	font = CTFontCreateWithFontDescriptor(desc2, 0, nil);
 	CFRelease(desc);
+	CFRelease(desc2);
+
+CFRelease(numberSpacingId);
+CFRelease(monospacedNumbersSelector);
+
 	if(font == nil)
 		return nil;
 	
