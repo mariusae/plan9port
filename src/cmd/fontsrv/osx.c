@@ -51,6 +51,7 @@ static struct {
 	{"Operator", Zero | Tab | Lnum },
 	{"Lucida", Zero },
 	{"Plex", Zero | SS02 },
+	{"Ideal", Zero | Tab | Lnum },
 };
 
 int
