@@ -35,11 +35,13 @@ enum {
 	SS05 = 1<<6,
 	SS11 = 1<<7,
 	SS12 = 1<<8,
-	SS15 = 1<<9,
+	SS14 = 1<<9,
+	SS15 = 1<<10,
+	SS17 = 1<<11,
 
-	Dquote = 1<<10,
-	Lnum = 1<<11,
-	Salt = 1<<12,
+	Dquote = 1<<12,
+	Lnum = 1<<13,
+	Salt = 1<<14,
 };
 
 // Store a map of font features to use.
@@ -214,12 +216,14 @@ fontfeatures(char *name, CTFontDescriptorRef desc)
 		desc = fontfeature(desc, CFSTR("ss04"), 1);
 	if(features & SS05)
 		desc = fontfeature(desc, CFSTR("ss05"), 1);
+	if(features & SS11)
+		desc = fontfeature(desc, CFSTR("ss11"), 1);
 	if(features & SS12)
 		desc = fontfeature(desc, CFSTR("ss12"), 1);
 	if(features & SS14)
 		desc = fontfeature(desc, CFSTR("ss14"), 1);
-	if(features & SS16)
-		desc = fontfeature(desc, CFSTR("ss16"), 1);
+	if(features & SS15)
+		desc = fontfeature(desc, CFSTR("ss15"), 1);
 	if(features & SS17)
 		desc = fontfeature(desc, CFSTR("ss17"), 1);
 	if(features & Salt)
