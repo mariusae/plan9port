@@ -54,7 +54,7 @@ static struct {
 	{"Gintronic", Zero | Tab | Lnum | SS01 | SS02 },
 	{"Operator", Zero | Tab | Lnum },
 	{"Lucida", Zero },
-	{"Plex", Zero | SS02 },
+	{"Plex", Zero },
 	{"Ideal", Zero | Tab | Lnum },
 	{"Whitney", Zero | Tab | Lnum | SS12 | SS14 },
 	{"Fira", Zero | Tab | Lnum },
