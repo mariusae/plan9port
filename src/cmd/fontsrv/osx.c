@@ -50,7 +50,7 @@ static struct {
 	int features;
 } featuremap[] = {
 	{"Vinkel", Dquote | Zero | Tab | SS01 | SS02 },
-	{"MetaPro", Zero | Tab | Lnum | SS01 },
+	{"MetaPro", Zero | Tab | Lnum  },
 	{"Fago", Zero | Tab | Lnum },
 	{"Unit", Zero | Tab | Lnum },
 	{"Gintronic", Zero | Tab | Lnum | SS01 | SS02 },
@@ -58,7 +58,7 @@ static struct {
 	{"Lucida", Zero },
 	{"Plex", Zero },
 	{"Ideal", Zero | Tab | Lnum },
-	{"Whitney", Zero | Tab | Lnum | SS12 | SS14 | SS17 },
+	{"Whitney", Zero | Tab | Lnum },
 	{"Fira", Zero | Tab | Lnum },
 };
 
