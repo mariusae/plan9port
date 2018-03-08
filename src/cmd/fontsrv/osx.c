@@ -43,6 +43,7 @@ enum {
 	Dquote = 1<<13,
 	Lnum = 1<<14,
 	Salt = 1<<15,
+	Endash = 1<<16,
 };
 
 // Store a map of font features to use.
@@ -58,8 +59,8 @@ static struct {
 	{"Operator", Zero | Tab | Lnum },
 	{"Lucida", Zero },
 	{"Plex", Zero },
-	{"Ideal", Zero | Tab | Lnum },
-	{"Whitney", Zero | Tab | Lnum | SS12 | SS14 | SS10 | SS11 },
+	{"Ideal", Zero | Tab | Lnum | Endash },
+	{"Whitney", Zero | Tab | Lnum |  SS11 | SS14 | Endash },
 	{"Fira", Zero | Tab | Lnum },
 };
 
@@ -84,6 +85,13 @@ mapUnicode(char *name, int i)
 		if(strstr(name, featuremap[j].name) && (featuremap[j].features & Dquote))
 			return 0x201d;
 	}
+	break;
+	case '-':
+	for(j=0; j<nelem(featuremap); j++) {
+		if(strstr(name, featuremap[j].name) && (featuremap[j].features & Endash))
+			return 0x2013;
+	}
+	break;
 	}
 	return i;
 }
