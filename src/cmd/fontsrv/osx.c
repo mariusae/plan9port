@@ -60,7 +60,7 @@ static struct {
 	{"Lucida", Zero },
 	{"Plex", Zero },
 	{"Ideal", Zero | Tab | Lnum | Endash },
-	{"Whitney", Zero | Tab | Lnum |  SS11 | SS14 | Endash },
+	{"Whitney", Zero | Tab | Lnum |  SS11 | SS14 | SS17 | Endash },
 	{"Fira", Zero | Tab | Lnum },
 };
 
@@ -89,7 +89,7 @@ mapUnicode(char *name, int i)
 	case '-':
 	for(j=0; j<nelem(featuremap); j++) {
 		if(strstr(name, featuremap[j].name) && (featuremap[j].features & Endash))
-			return 0x2013;
+			return 0x2212;
 	}
 	break;
 	}
