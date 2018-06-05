@@ -163,7 +163,7 @@ threadmain(int argc, char *argv[])
 		threadexitsall("geninitdraw");
 	}
 */
-	if(initdraw(derror, fontnames[0], "ACME") < 0){
+	if(initdraw(derror, fontnames[0], "acme") < 0){
 		fprint(2, "acme: can't open display: %r\n");
 		threadexitsall("initdraw");
 	}
