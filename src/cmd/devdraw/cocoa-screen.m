@@ -1012,9 +1012,12 @@ static void
 updatecursor(void)
 {
 	NSCursor *c;
+	NSRect r;
 	int isdown, isinside;
 
-	isinside = NSPointInRect(in.mpos, [win.content bounds]);
+	r = [win.content bounds];
+	r = scalerect(r, win.topixelscale);
+	isinside = NSPointInRect(in.mpos, r);
 	isdown = (in.mbuttons || in.kbuttons);
 
 	if(win.cursor && (isinside || isdown))
