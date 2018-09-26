@@ -16,6 +16,8 @@
 #include "a.h"
 
 extern void CGFontGetGlyphsForUnichars(CGFontRef, const UniChar[], const CGGlyph[], size_t);
+extern void CGContextSetFontSmoothingStyle(CGContextRef, int);
+extern int CGContextGetFontSmoothingStyle(CGContextRef);
 
 // In these fonts, it's too hard to distinguish U+2018 and U+2019,
 // so don't map the ASCII quotes there.
@@ -416,6 +418,7 @@ mksubfont(XFont *f, char *name, int lo, int hi, int size, int antialias)
 	}
 
 	CGContextSetAllowsAntialiasing(ctxt, antialias);
+	CGContextSetAllowsFontSmoothing(ctxt, 0);
 	CGContextSetTextPosition(ctxt, 0, 0);	// XXX
 
 	x = 0;
@@ -494,6 +497,6 @@ mksubfont(XFont *f, char *name, int lo, int hi, int size, int antialias)
 	sf->ascent = Dy(m1->r) - y0;
 	sf->info = fc0;
 	sf->bits = m1;
-	
+
 	return sf;
 }
