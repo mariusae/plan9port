@@ -1484,8 +1484,10 @@ kicklabel0(char *label) {
 }
 
 void
-setcursor(Cursor *c)
+setcursor(Cursor *c, Cursor2 *c2)
 {
+	USED(c2);
+
 	/*
 	 * No cursor change unless in main thread.
 	 */
@@ -1731,4 +1733,10 @@ setprocname(const char *s)
                                                NULL /* optional out param */);
   if(err != noErr)
     fprint(2, "Call to set process name failed\n");
+}
+
+void
+resizewindow(Rectangle r)
+{
+	USED(r);
 }

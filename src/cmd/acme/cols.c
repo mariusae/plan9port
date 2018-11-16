@@ -250,8 +250,12 @@ colresize(Column *c, Rectangle r)
 		w->maxlines = 0;
 		if(i == c->nw-1)
 			r1.max.y = r.max.y;
-		else
-			r1.max.y = r1.min.y+(Dy(w->r)+Border)*Dy(r)/Dy(c->r);
+		else{
+			r1.max.y = r1.min.y;
+			if(Dy(c->r) != 0){
+				r1.max.y += (Dy(w->r)+Border)*Dy(r)/Dy(c->r);
+			}
+		}
 		r1.max.y = max(r1.max.y, r1.min.y + Border+font->height);
 		r2 = r1;
 		r2.max.y = r2.min.y+Border;
@@ -473,7 +477,7 @@ coldragwin(Column *c, Window *w, int but)
 	Column *nc;
 
 	clearmouse();
-	setcursor(mousectl, &boxcursor);
+	setcursor2(mousectl, &boxcursor, &boxcursor2);
 	b = mouse->buttons;
 	op = mouse->xy;
 	while(mouse->buttons == b)

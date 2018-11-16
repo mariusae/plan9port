@@ -2,7 +2,7 @@
 
 Memimage *attachscreen(char*, char*);
 void	setmouse(Point);
-void	setcursor(Cursor*);
+void	setcursor(Cursor*, Cursor2*);
 void	setlabel(char*);
 char*	getsnarf(void);
 void	putsnarf(char*);
@@ -16,5 +16,9 @@ void	servep9p(void);
 void	zlock(void);
 void	zunlock(void);
 
+void resizeimg(void);
+
 Rectangle mouserect;
-int	mouseresized;
+
+int mouseresized;
+void resizewindow(Rectangle);

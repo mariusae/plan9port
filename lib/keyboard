@@ -475,6 +475,8 @@
 2194  ab          ↔	left right arrow
 21D0  V=          ⇐	left double arrow
 21D2  =V          ⇒	right double arrow
+21E4  |<          ⇤	left arrow to bar
+21E5  >|          ⇥	right arrow to bar
 2200  fa          ∀	for all
 2202  pd          ∂	partial differential
 2203  te          ∃	there exists
@@ -551,6 +553,8 @@
 22E6  <!~         ⋦	less than but not equivalent to
 22E7  >!~         ⋧	greater than but not equivalent to
 22EF  el          ⋯	midline horizontal ellipsis
+2308  lc          ⌈ left ceiling
+2309  rc          ⌉ right ceiling
 230A  lf          ⌊ left floor
 230B  rf          ⌋ right floor
 2329  </          〈 left angle bracket
