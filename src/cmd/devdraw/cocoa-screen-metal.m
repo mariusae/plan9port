@@ -52,6 +52,7 @@ usage(void)
 - (void)clearInput;
 - (void)getmouse:(NSEvent *)e;
 - (void)sendmouse:(NSUInteger)b;
+- (void)scrollmouse:(NSUInteger)b by:(NSUInteger)amount;
 - (void)resetLastInputRect;
 - (void)enlargeLastInputRect:(NSRect)r;
 @end
@@ -437,12 +438,17 @@ struct Cursors {
 - (void)scrollWheel:(NSEvent*)e
 {
 	NSInteger s;
+	int b;
 
 	s = [e scrollingDeltaY];
 	if(s > 0)
-		[self sendmouse:8];
-	else if (s < 0)
-		[self sendmouse:16];
+		b = 8;
+	else if(s < 0)
+		b = 16;
+	else
+		return;
+
+	[self scrollmouse:b by:s];
 }
 
 - (void)keyDown:(NSEvent*)e
@@ -542,13 +548,18 @@ struct Cursors {
 
 - (void)sendmouse:(NSUInteger)b
 {
+	[self scrollmouse:b by:0];
+}
+
+- (void)scrollmouse:(NSUInteger)b by:(NSUInteger)scroll
+{
 	NSPoint p;
 
 	p = [self.window convertPointToBacking:
 		[self.window mouseLocationOutsideOfEventStream]];
 	p.y = Dy(mouserect) - p.y;
 	// LOG(@"(%g, %g) <- sendmouse(%d)", p.x, p.y, (uint)b);
-	mousetrack(p.x, p.y, b, msec());
+	mousetrack(p.x, p.y, b, scroll, msec());
 	if(b && _lastInputRect.size.width && _lastInputRect.size.height)
 		[self resetLastInputRect];
 }

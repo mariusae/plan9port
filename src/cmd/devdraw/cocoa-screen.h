@@ -8,7 +8,7 @@ char*	getsnarf(void);
 void	putsnarf(char*);
 void	topwin(void);
 
-void	mousetrack(int, int, int, uint);
+void	mousetrack(int, int, int, int, uint);
 void	keystroke(int);
 void	kicklabel(char*);
 

@@ -669,8 +669,6 @@ xtextscroll(Text *t, int n)
 {
 	uint q0;
 	
-	//fprint(2, "textscroll %d\n", n);
-
 	if(n == 0)
 		return;
 

@@ -310,7 +310,7 @@ matchmouse(void)
 }
 
 void
-mousetrack(int x, int y, int b, uint ms)
+mousetrack(int x, int y, int b, int scroll, uint ms)
 {
 	Mouse *m;
 	
@@ -333,6 +333,7 @@ mousetrack(int x, int y, int b, uint ms)
 		m->xy.x = x;
 		m->xy.y = y;
 		m->buttons = b;
+		m->scroll = scroll;
 		m->msec = ms;
 
 		mouse.m[mouse.wi] = *m;
