@@ -11,7 +11,7 @@ fn text {
 		status=''
 }
 
-PROMPT='[^ 	]*[%;$][ 	]+'
+PROMPT='[^ 	]*[%;$#][ 	]+'
 
 fn cmds {
 	text | sed -n 's/^'$PROMPT'([^"])/	\1/p'

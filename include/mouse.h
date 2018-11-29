@@ -9,6 +9,7 @@ typedef struct 	Mousectl Mousectl;
 struct	Mouse
 {
 	int	buttons;	/* bit array: LMR=124 */
+	int	scroll;
 	Point	xy;
 	ulong	msec;
 };

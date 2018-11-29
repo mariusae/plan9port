@@ -1162,7 +1162,7 @@ sendmouse(void)
 	mouserect = Rect(0, 0, size.width, size.height);
 
 	b = in.kbuttons | in.mbuttons | in.mscroll;
-	mousetrack(in.mpos.x, in.mpos.y, b, msec());
+	mousetrack(in.mpos.x, in.mpos.y, b, 0, msec());
 	in.mscroll = 0;
 }
 
