@@ -44,8 +44,9 @@ enum {
 
 	Dquote = 1<<13,
 	Lnum = 1<<14,
-	Salt = 1<<15,
-	Endash = 1<<16,
+	Pnum = 1<<15,
+	Salt = 1<<16,
+	Endash = 1<<17,
 };
 
 // Store a map of font features to use.
@@ -54,16 +55,20 @@ static struct {
 	int features;
 } featuremap[] = {
 	{"Vinkel", Dquote | Zero | Tab | SS01 | SS02 },
-	{"MetaPro", Zero | Tab | Lnum  },
+	{"MetaPro", Zero | Tab | Lnum | Endash },
 	{"Fago", Zero | Tab | Lnum },
 	{"Unit", Zero | Tab | Lnum },
-	{"Gintronic", Zero | Tab | Lnum | SS01 | SS02 },
+	{"Gintronic", Pnum  },
 	{"Operator", Zero | Tab | Lnum },
 	{"Lucida", Zero },
-	{"Plex", Zero },
+	{"Plex", Zero | Endash },
 	{"Ideal", Zero | Tab | Lnum | Endash },
 	{"Whitney", Zero | Tab | Lnum |  SS11 | SS14 | SS17 | Endash },
 	{"Fira", Zero | Tab | Lnum },
+	{"SF", Zero | Tab | Lnum | Endash },
+	{"Syntax", Zero | Tab | Lnum | Endash },
+	{"Consolas", Zero | Tab | Lnum | Endash },
+	{"Calibri", Zero | Tab | Lnum | Endash },
 };
 
 int
@@ -244,6 +249,8 @@ fontfeatures(char *name, CTFontDescriptorRef desc)
 		desc = fontfeature(desc, CFSTR("salt"), 1);
 	if(features & Lnum)
 		desc = fontfeature(desc, CFSTR("lnum"), 1);
+	if(features & Pnum)
+		desc = fontfeature(desc, CFSTR("pnum"), 1);
 	return desc;
 }
 
