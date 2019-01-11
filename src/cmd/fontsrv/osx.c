@@ -63,7 +63,7 @@ static struct {
 	{"Lucida", Zero },
 	{"Plex", Zero | Endash },
 	{"Ideal", Zero | Tab | Lnum | Endash },
-	{"Whitney", Zero | Tab | Lnum |  SS11 | SS14 | SS17 | Endash },
+	{"Whitney", Zero | Tab | Lnum |  SS11 | SS17 | Endash },
 	{"Fira", Zero | Tab | Lnum },
 	{"SF", Zero | Tab | Lnum | Endash },
 	{"Syntax", Zero | Tab | Lnum | Endash },
