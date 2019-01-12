@@ -70,6 +70,8 @@ static struct {
 	{"Syntax", Zero | Tab | Lnum | Endash },
 	{"Consolas", Zero | Tab | Lnum | Endash },
 	{"Calibri", Zero | Tab | Lnum | Endash },
+	{"Bernino", Zero | Tab | Endash },
+	{"TynineSans", Endash },
 };
 
 int
