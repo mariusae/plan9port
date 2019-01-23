@@ -35,18 +35,20 @@ enum {
 	SS03 = 1<<4,
 	SS04 = 1<<5,
 	SS05 = 1<<6,
-	SS10 = 1<<7,
-	SS11 = 1<<8,
-	SS12 = 1<<9,
-	SS14 = 1<<10,
-	SS15 = 1<<11,
-	SS17 = 1<<12,
+	SS06 = 1<<7,
+	SS07 = 1<<8,
+	SS10 = 1<<9,
+	SS11 = 1<<10,
+	SS12 = 1<<11,
+	SS14 = 1<<12,
+	SS15 = 1<<13,
+	SS17 = 1<<14,
 
-	Dquote = 1<<13,
-	Lnum = 1<<14,
-	Pnum = 1<<15,
-	Salt = 1<<16,
-	Endash = 1<<17,
+	Dquote = 1<<15,
+	Lnum = 1<<16,
+	Pnum = 1<<17,
+	Salt = 1<<18,
+	Endash = 1<<19,
 };
 
 // Store a map of font features to use.
@@ -72,6 +74,7 @@ static struct {
 	{"Calibri", Zero | Tab | Lnum | Endash },
 	{"Bernino", Zero | Tab | Endash },
 	{"TynineSans", Endash },
+	{"Mallory", Tab | Zero | SS04 | SS06 | SS07 },
 };
 
 int
@@ -236,6 +239,10 @@ fontfeatures(char *name, CTFontDescriptorRef desc)
 		desc = fontfeature(desc, CFSTR("ss04"), 1);
 	if(features & SS05)
 		desc = fontfeature(desc, CFSTR("ss05"), 1);
+	if(features & SS06)
+		desc = fontfeature(desc, CFSTR("ss06"), 1);
+	if(features & SS07)
+		desc = fontfeature(desc, CFSTR("ss07"), 1);	
 	if(features & SS10)
 		desc = fontfeature(desc, CFSTR("ss10"), 1);
 	if(features & SS11)
