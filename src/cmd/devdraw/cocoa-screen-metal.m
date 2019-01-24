@@ -545,7 +545,12 @@ struct Cursors {
 	if(b == 1){
 		m = [e modifierFlags];
 		if(m & NSEventModifierFlagOption){
-			abortcompose();
+			abortcompose(); 
+			if(m & NSEventModifierFlagControl){
+				[self sendmouse:2];
+				[self sendmouse:1];
+				return;
+			}
 			b = 2;
 		}else
 		if(m & NSEventModifierFlagCommand)
