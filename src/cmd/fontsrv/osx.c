@@ -74,7 +74,7 @@ static struct {
 	{"Calibri", Zero | Tab | Lnum | Endash },
 	{"Bernino", Zero | Tab | Endash },
 	{"TynineSans", Endash },
-	{"Mallory", Tab | Zero | SS04 | SS06 | SS07 },
+	{"Mallory", Tab | Zero | SS04 | SS06 | SS07 | Endash },
 };
 
 int
