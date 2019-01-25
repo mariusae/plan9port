@@ -499,6 +499,15 @@ struct Cursors {
 		[[self window] toggleFullScreen:nil];
 }
 
+- (void)smartMagnifyWithEvent:(NSEvent *)e
+{
+
+	if([e type] != NSEventTypeSmartMagnify)
+		return;
+	
+	[self sendmouse:2];
+}
+
 - (void)touchesBeganWithEvent:(NSEvent*)e
 {
 	_tapping = YES;
