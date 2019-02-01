@@ -66,6 +66,7 @@ static struct {
 	{"Plex", Zero | Endash },
 	{"Ideal", Zero | Tab | Lnum | Endash },
 	{"Whitney", Zero | Tab | Lnum |  SS11 | SS17 | Endash },
+	{"Metric", Tab | Endash },
 	{"Drive", Zero | Tab | Lnum |  Endash },
 	{"Fira", Zero | Tab | Lnum },
 	{"SF", Zero | Tab | Lnum | Endash },
