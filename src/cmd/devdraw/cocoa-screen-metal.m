@@ -75,9 +75,6 @@ static Memimage *img = NULL;
 
 static QLock snarfl;
 
-int pressurestage = 0;
-int stagebuttons = 0;
- 
 static NSString *const metal =
 @"#include<metal_stdlib>\n"
 "using namespace metal;\n"
@@ -512,12 +509,18 @@ struct Cursors {
 	[self sendmouse:0];
 }
 
+int stage = 0;
+
 - (void)pressureChangeWithEvent:(NSEvent *)e
 {
-	if(e.stage == 2){
+	if(e.stage == 2 && stage < 2){
+		[self sendmouse:0];	// hack gross
 		[self sendmouse:4];
 		[self sendmouse:0];
+	}else if(e.stage < 2 && stage == 2) {
+//		[self sendmouse:0];
 	}
+	stage = e.stage;
 }
 
 - (void)touchesBeganWithEvent:(NSEvent*)e
