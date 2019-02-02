@@ -56,7 +56,7 @@ static struct {
 	char *name;
 	int features;
 } featuremap[] = {
-	{"Vinkel", Dquote | Zero | Tab | SS01 | SS02 },
+	{"Vinkel", Dquote | Endash | Zero | Tab },
 	{"MetaPro", Zero | Tab | Lnum | Endash },
 	{"Fago", Zero | Tab | Lnum },
 	{"Unit", Zero | Tab | Lnum },
