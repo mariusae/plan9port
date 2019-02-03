@@ -116,7 +116,7 @@ mac2c(CFStringRef s)
 	char *p;
 	int n;
 
-	n = CFStringGetLength(s)*8;	
+	n = CFStringGetLength(s)*8;
 	p = malloc(n);
 	CFStringGetCString(s, p, n, kCFStringEncodingUTF8);
 	return p;
@@ -158,7 +158,7 @@ loadfonts(void)
 		if(f == nil)
 			continue;
 		s = CTFontDescriptorCopyAttribute(f, kCTFontNameAttribute);
-		xfont[nxfont].name = mac2c(s);		
+		xfont[nxfont].name = mac2c(s);
 		CFRelease(s);
 		nxfont++;
 	}
@@ -184,27 +184,27 @@ fontfeature(CTFontDescriptorRef desc, CFStringRef feature, int value)
 	CFTypeRef keys[] = { kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue };
 	CFTypeRef values[] = { feature, val };
 	CFDictionaryRef dict = CFDictionaryCreate(
-		CFAllocatorGetDefault(), keys, values, 2, 
+		CFAllocatorGetDefault(), keys, values, 2,
 		&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 	CFRelease(val);
-	
+
 	CFTypeRef settingsValues[] = { dict };
 	CFArrayRef featureSettings = CFArrayCreate(CFAllocatorGetDefault(), settingsValues, 1, &kCFTypeArrayCallBacks);
 	CFRelease(dict);
-	
+
 	CFTypeRef descriptorKeys[] = { kCTFontFeatureSettingsAttribute };
 	CFTypeRef descriptorValues[] = { featureSettings };
-	CFDictionaryRef descriptorAttrs =  CFDictionaryCreate(CFAllocatorGetDefault(), descriptorKeys, 
+	CFDictionaryRef descriptorAttrs =  CFDictionaryCreate(CFAllocatorGetDefault(), descriptorKeys,
 		descriptorValues, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-	
+
 	CTFontDescriptorRef desc2 = CTFontDescriptorCreateCopyWithAttributes(desc, descriptorAttrs);
 	CFRelease(descriptorAttrs);
 	CFRelease(desc);
-	return desc2;	
+	return desc2;
 }
 
 static CTFontDescriptorRef
-fontfeatures(char *name, CTFontDescriptorRef desc) 
+fontfeatures(char *name, CTFontDescriptorRef desc)
 {
 	int i;
 	CTFontDescriptorRef tmp;
@@ -243,7 +243,7 @@ fontfeatures(char *name, CTFontDescriptorRef desc)
 	if(features & SS06)
 		desc = fontfeature(desc, CFSTR("ss06"), 1);
 	if(features & SS07)
-		desc = fontfeature(desc, CFSTR("ss07"), 1);	
+		desc = fontfeature(desc, CFSTR("ss07"), 1);
 	if(features & SS10)
 		desc = fontfeature(desc, CFSTR("ss10"), 1);
 	if(features & SS11)
@@ -281,7 +281,7 @@ fontheight(XFont *f, int size, int *height, int *ascent)
 	CFRelease(s);
 	if(desc == nil)
 		return;
-		
+
 	desc = fontfeatures(f->name, desc);
 	font = CTFontCreateWithFontDescriptor(desc, 0, nil);
 	CFRelease(desc);
@@ -304,7 +304,7 @@ fontheight(XFont *f, int size, int *height, int *ascent)
 		CTLineRef line;
 
  		str = c2mac(lines[i]);
- 		
+
  		// See https://developer.apple.com/library/ios/documentation/StringsTextFonts/Conceptual/CoreText_Programming/LayoutOperations/LayoutOperations.html#//apple_ref/doc/uid/TP40005533-CH12-SW2
  		attrs = CFDictionaryCreate(kCFAllocatorDefault, (const void**)&keys,
 			(const void**)&values, sizeof(keys) / sizeof(keys[0]),
@@ -319,15 +319,15 @@ fontheight(XFont *f, int size, int *height, int *ascent)
 		r.size.width += r.origin.x;
 		r.size.height += r.origin.y;
 		CFRelease(line);
-		
+
 //	fprint(2, "%s: %g %g %g %g\n", lines[i], r.origin.x, r.origin.y, r.size.width, r.size.height);
-		
+
 		if(i == 0)
 			bbox = r;
 		if(bbox.origin.x > r.origin.x)
-			bbox.origin.x = r.origin.x;	
+			bbox.origin.x = r.origin.x;
 		if(bbox.origin.y > r.origin.y)
-			bbox.origin.y = r.origin.y;	
+			bbox.origin.y = r.origin.y;
 		if(bbox.size.width < r.size.width)
 			bbox.size.width = r.size.width;
 		if(bbox.size.height < r.size.height)
@@ -339,7 +339,7 @@ fontheight(XFont *f, int size, int *height, int *ascent)
 
 	*height = bbox.size.height + 0.999999;
 	*ascent = *height - (-bbox.origin.y + 0.999999);
-		
+
 	CGContextRelease(ctxt);
 	CFRelease(font);
 }
@@ -392,8 +392,8 @@ mksubfont(XFont *f, char *name, int lo, int hi, int size, int antialias)
 
 	if(font == nil)
 		return nil;
-	
-	
+
+
 	bbox = CTFontGetBoundingBox(font);
 	x = (int)(bbox.size.width*2 + 0.99999999);
 
@@ -436,7 +436,6 @@ mksubfont(XFont *f, char *name, int lo, int hi, int size, int antialias)
 	}
 
 	CGContextSetAllowsAntialiasing(ctxt, antialias);
-	CGContextSetAllowsFontSmoothing(ctxt, 0);
 	CGContextSetTextPosition(ctxt, 0, 0);	// XXX
 #if OSX_VERSION >= 101400
 	CGContextSetAllowsFontSmoothing(ctxt, false);
@@ -456,7 +455,7 @@ mksubfont(XFont *f, char *name, int lo, int hi, int size, int antialias)
 
 		sprint(buf, "%C", (Rune)mapUnicode(name, i));
  		str = c2mac(buf);
- 		
+
  		// See https://developer.apple.com/library/ios/documentation/StringsTextFonts/Conceptual/CoreText_Programming/LayoutOperations/LayoutOperations.html#//apple_ref/doc/uid/TP40005533-CH12-SW2
  		attrs = CFDictionaryCreate(kCFAllocatorDefault, (const void**)&keys,
 			(const void**)&values, sizeof(keys) / sizeof(keys[0]),
@@ -470,7 +469,7 @@ mksubfont(XFont *f, char *name, int lo, int hi, int size, int antialias)
 		CGContextSetTextPosition(ctxt, 0, y0);
 		r = CTLineGetImageBounds(line, ctxt);
 		memfillcolor(mc, DBlack);
-		CTLineDraw(line, ctxt);		
+		CTLineDraw(line, ctxt);
 		CFRelease(line);
 
 		fc->x = x;
@@ -485,7 +484,7 @@ mksubfont(XFont *f, char *name, int lo, int hi, int size, int antialias)
 			if(i == 0) {
 				drawpjw(m, fc, x, (int)(bbox.size.width + 0.99999999), y, y - y0);
 				x += fc->width;
-			}	
+			}
 			continue;
 		}
 
