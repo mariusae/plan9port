@@ -42,13 +42,14 @@ enum {
 	SS12 = 1<<11,
 	SS14 = 1<<12,
 	SS15 = 1<<13,
-	SS17 = 1<<14,
+	SS16 = 1<<14,
+	SS17 = 1<<15,
 
-	Dquote = 1<<15,
-	Lnum = 1<<16,
-	Pnum = 1<<17,
-	Salt = 1<<18,
-	Endash = 1<<19,
+	Dquote = 1<<16,
+	Lnum = 1<<17,
+	Pnum = 1<<18,
+	Salt = 1<<19,
+	Endash = 1<<20,
 };
 
 // Store a map of font features to use.
@@ -65,7 +66,7 @@ static struct {
 	{"Lucida", Zero },
 	{"Plex", Zero | Endash },
 	{"Ideal", Zero | Tab | Lnum | Endash },
-	{"Whitney", Zero | Tab | Lnum |  SS11 | SS17 | Endash },
+	{"Whitney", Zero | Tab | Lnum |  SS11 |  SS15 | SS16 | Endash },
 	{"Metric", Tab | Endash },
 	{"Drive", Zero | Tab | Lnum |  Endash },
 	{"Fira", Zero | Tab | Lnum },
@@ -254,6 +255,8 @@ fontfeatures(char *name, CTFontDescriptorRef desc)
 		desc = fontfeature(desc, CFSTR("ss14"), 1);
 	if(features & SS15)
 		desc = fontfeature(desc, CFSTR("ss15"), 1);
+	if(features & SS16)
+		desc = fontfeature(desc, CFSTR("ss16"), 1);
 	if(features & SS17)
 		desc = fontfeature(desc, CFSTR("ss17"), 1);
 	if(features & Salt)
