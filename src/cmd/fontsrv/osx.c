@@ -77,6 +77,7 @@ static struct {
 	{"Bernino", Zero | Tab | Endash },
 	{"TynineSans", Endash },
 	{"Mallory", Tab | Zero | SS04 | SS06 | SS07 | Endash },
+	{"GTAmericaMono", SS01 | Endash },
 };
 
 int
