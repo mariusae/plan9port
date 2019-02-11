@@ -67,6 +67,7 @@ static struct {
 	{"Plex", Zero | Endash },
 	{"Ideal", Zero | Tab | Lnum | Endash },
 	{"Whitney", Zero | Tab | Lnum |  SS11 |  SS15 | SS16 | Endash },
+	{"Verb", Zero | Endash },
 	{"Metric", Tab | Endash },
 	{"Drive", Zero | Tab | Lnum |  Endash },
 	{"Fira", Zero | Tab | Lnum },
@@ -78,6 +79,7 @@ static struct {
 	{"TynineSans", Endash },
 	{"Mallory", Tab | Zero | SS04 | SS06 | SS07 | Endash },
 	{"GTAmericaMono", SS01 | Endash },
+	{"Ringside", Tab | Zero | SS07 | Endash },
 };
 
 int
