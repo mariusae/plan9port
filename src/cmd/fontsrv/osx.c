@@ -61,7 +61,7 @@ static struct {
 	{"MetaPro", Zero | Tab | Lnum | Endash },
 	{"Fago", Zero | Tab | Lnum },
 	{"Unit", Zero | Tab | Lnum },
-	{"Gintronic", Pnum  },
+	{"Gintronic", Lnum | SS01 },
 	{"Operator", Zero | Tab | Lnum },
 	{"Lucida", Zero },
 	{"Plex", Zero | Endash },
