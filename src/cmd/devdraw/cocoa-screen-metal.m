@@ -154,6 +154,7 @@ threadmain(int argc, char **argv)
 	id<MTLLibrary> library;
 	MTLRenderPipelineDescriptor *pipelineDesc;
 	NSError *error;
+	NSArray *allDevices;
 
 	const NSWindowStyleMask Winstyle = NSWindowStyleMaskTitled
 		| NSWindowStyleMaskClosable
@@ -198,8 +199,18 @@ threadmain(int argc, char **argv)
 	[win setContentView:myContent];
 	[myContent setWantsLayer:YES];
 	[myContent setLayerContentsRedrawPolicy:NSViewLayerContentsRedrawOnSetNeedsDisplay];
-
-	device = MTLCreateSystemDefaultDevice();
+	
+	device = nil;
+	allDevices = MTLCopyAllDevices();
+	for(id mtlDevice in allDevices) {
+		if ([mtlDevice isLowPower] && ![mtlDevice isRemovable]) {
+			device = mtlDevice;
+			break;
+		}
+	}
+	if(!device)
+		device = MTLCreateSystemDefaultDevice();
+	
 	commandQueue = [device newCommandQueue];
 
 	layer = (DrawLayer *)[myContent layer];
@@ -380,6 +391,11 @@ struct Cursors {
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)theApplication {
 	return YES;
+}
+
+- (void)windowDidBecomeKey:(id)arg
+{
+        [myContent sendmouse:0];
 }
 
 @end
@@ -889,7 +905,6 @@ keycvt(uint code)
 {
 	switch(code){
 	case '\r': return '\n';
-	case '\b': return 127;
 	case 127: return '\b';
 	case NSUpArrowFunctionKey: return Kup;
 	case NSDownArrowFunctionKey: return Kdown;
@@ -1030,6 +1045,10 @@ void
 _flushmemscreen(Rectangle r)
 {
 	LOG(@"_flushmemscreen(%d,%d,%d,%d)", r.min.x, r.min.y, Dx(r), Dy(r));
+	if(!rectinrect(r, Rect(0, 0, texture.width, texture.height))){
+		LOG(@"Rectangle is out of bounds, return.");
+		return;
+	}
 
 	@autoreleasepool{
 		[texture
