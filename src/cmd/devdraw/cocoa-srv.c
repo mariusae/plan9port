@@ -165,14 +165,6 @@ runmsg(Wsysmsg *m)
 		if(m->arrowcursor)
 			setcursor(nil, nil);
 		else
-			setcursor(&m->cursor, nil);
-		replymsg(m);
-		break;
-
-	case Tcursor2:
-		if(m->arrowcursor)
-			setcursor(nil, nil);
-		else
 			setcursor(&m->cursor, &m->cursor2);
 		replymsg(m);
 		break;
