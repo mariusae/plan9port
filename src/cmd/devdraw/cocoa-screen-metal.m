@@ -58,6 +58,8 @@ usage(void)
 @end
 @interface DrawLayer : CAMetalLayer
 @end
+@interface appwin : NSWindow @end
+
 
 static AppDelegate *myApp = NULL;
 static DevDrawView *myContent = NULL;
@@ -180,7 +182,7 @@ threadmain(int argc, char **argv)
 	r.size.height = fmin(Dy(wr), r.size.height);
 	r = [NSWindow contentRectForFrameRect:r styleMask:Winstyle];
 
-	win = [[NSWindow alloc]
+	win = [[appwin alloc]
 		initWithContentRect:r
 		styleMask:Winstyle
 		backing:NSBackingStoreBuffered defer:NO];
@@ -199,7 +201,7 @@ threadmain(int argc, char **argv)
 	[win setContentView:myContent];
 	[myContent setWantsLayer:YES];
 	[myContent setLayerContentsRedrawPolicy:NSViewLayerContentsRedrawOnSetNeedsDisplay];
-	
+
 	device = nil;
 	allDevices = MTLCopyAllDevices();
 	for(id mtlDevice in allDevices) {
@@ -210,7 +212,7 @@ threadmain(int argc, char **argv)
 	}
 	if(!device)
 		device = MTLCreateSystemDefaultDevice();
-	
+
 	commandQueue = [device newCommandQueue];
 
 	layer = (DrawLayer *)[myContent layer];
@@ -240,6 +242,9 @@ threadmain(int argc, char **argv)
 		sysfatal((char *)[[error localizedDescription] UTF8String]);
 
 	[NSEvent setMouseCoalescingEnabled:NO];
+
+	[win registerForDraggedTypes:[NSArray arrayWithObjects:
+		NSFilenamesPboardType, nil]];
 
 	topwin();
 }
@@ -392,6 +397,42 @@ struct Cursors {
 
 @end
 
+@implementation appwin
+ - (NSDragOperation)draggingEntered:(id)arg
+{
+ 	NSPasteboard *b;
+ 	NSDragOperation op;
+
+ 	op = [arg draggingSourceOperationMask];
+ 	b = [arg draggingPasteboard];
+
+ 	if([[b types] containsObject:NSFilenamesPboardType])
+ 	if(op&NSDragOperationLink)
+ 		return NSDragOperationLink;
+
+ 	return NSDragOperationNone;
+}
+
+ - (BOOL)performDragOperation:(id)arg
+{
+ 	NSPasteboard *b;
+ 	NSArray *files;
+ 	int i, n;
+
+ 	b = [arg draggingPasteboard];
+ 	if(![[b types] containsObject:NSFilenamesPboardType])
+ 		return NO;
+
+ 	files = [b propertyListForType:NSFilenamesPboardType];
+ 	n = [files count];
+ 	for(i=0; i<n; i++)
+ 	if(fork() == 0)
+ 		execl("macedit", "macedit", [[files objectAtIndex:i] UTF8String], nil);
+
+ 	return YES;
+}
+@end
+
 @implementation DevDrawView
 {
 	NSMutableString *_tmpText;
@@ -512,7 +553,7 @@ struct Cursors {
 
 	if([e type] != NSEventTypeSmartMagnify)
 		return;
-	
+
 	[self sendmouse:2];
 	[self sendmouse:0];
 }
@@ -577,7 +618,7 @@ int stage = 0;
 	if(b == 1){
 		m = [e modifierFlags];
 		if(m & NSEventModifierFlagOption){
-			abortcompose(); 
+			abortcompose();
 			if(m & NSEventModifierFlagControl){
 				[self sendmouse:2];
 				[self sendmouse:1];
@@ -1146,7 +1187,7 @@ void
 setcursor(Cursor *c, Cursor2 *c2)
 {
 	Cursors cs;
-	
+
 	cs.c = c;
 	cs.c2 = c2;
 
