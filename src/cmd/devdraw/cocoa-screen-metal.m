@@ -605,9 +605,14 @@ int stage = 0;
 				return;
 			}
 			b = 2;
-		}else
-		if(m & NSEventModifierFlagCommand)
+		}else if(m & NSEventModifierFlagCommand)
 			b = 4;
+		else if(m & NSEventModifierFlagControl)
+			b = 8;
+	}else if(b == 4){
+		m = [e modifierFlags];
+		if(m & NSEventModifierFlagCommand)
+			b = 8;
 	}
 	[self sendmouse:b];
 }

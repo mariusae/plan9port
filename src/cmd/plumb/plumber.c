@@ -7,7 +7,6 @@
 #include "plumber.h"
 
 int debug;
-int foreground=0;
 char	*plumbfile;
 char *user;
 char *home;
@@ -37,9 +36,6 @@ threadmain(int argc, char *argv[])
 	ARGBEGIN{
 	case 'd':
 		debug = 1;
-		break;
-	case 'f':
-		foreground = 1;
 		break;
 	case 'p':
 		plumbfile = ARGF();
@@ -73,7 +69,7 @@ threadmain(int argc, char *argv[])
 	 */
 	printerrors = 0;
 	makeports(rules);
-	startfsys(foreground);
+	startfsys();
 	threadexits(nil);
 }
 

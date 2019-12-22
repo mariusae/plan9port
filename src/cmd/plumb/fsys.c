@@ -186,7 +186,7 @@ getclock(void)
 }
 
 void
-startfsys(int foreground)
+startfsys(void)
 {
 	int p[2];
 
@@ -199,10 +199,7 @@ startfsys(int foreground)
 	if(post9pservice(p[1], "plumb", nil) < 0)
 		sysfatal("post9pservice plumb: %r");
 	close(p[1]);
-	if(foreground)
-		fsysproc(nil);
-	else
-		proccreate(fsysproc, nil, Stack);
+	proccreate(fsysproc, nil, Stack);
 }
 
 static void

@@ -736,8 +736,8 @@ morerules(uchar *text, int done)
 		 */
 		endofrule = nil;
 		for(s=text; *s!='\0'; s++)
-			if(*s=='\n' && *(s+1)=='\n')
-				endofrule = s+2;
+			if(*s=='\n' && *++s=='\n')
+				endofrule = s+1;
 		if(endofrule == nil)
 			return text;
 		input->end = endofrule;
@@ -772,7 +772,7 @@ writerules(char *s, int n)
 		tmp = stringof(s, n);
 		text = (uchar*)concat((char*)text, tmp);
 		free(tmp);
-		text = morerules(text, n==0);
+		text = morerules(text, s==nil);
 	}
 	if(s == nil){
 		free(text);
