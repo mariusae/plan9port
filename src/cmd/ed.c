@@ -13,7 +13,7 @@ enum
 	FNSIZE	= 128,		/* file name */
 	LBSIZE	= 4096,		/* max line size */
 	BLKSIZE	= 4096,		/* block size in temp file */
-	NBLK	= 32767,		/* max size of temp file */
+	NBLK	= 32767,	/* max size of temp file */
 	ESIZE	= 256,		/* max size of reg exp */
 	GBSIZE	= 256,		/* max size of global command */
 	MAXSUB	= 9,		/* max number of sub reg exp */
@@ -1050,7 +1050,7 @@ putline(void)
 		}
 	}
 	nl = tline;
-	tline += ((lp-linebuf) + 03) & 077776;
+	tline += ((lp-linebuf) + 03) & (NBLK-1);
 	return nl;
 }
 
