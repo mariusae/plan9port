@@ -1666,6 +1666,7 @@ runproc(void *argvp)
 		dir = runetobyte(rdir, ndir);
 	ret = threadspawnd(sfd, av[0], av, dir);
 	free(dir);
+
 	if(ret >= 0){
 		if(cpid)
 			sendul(cpid, ret);

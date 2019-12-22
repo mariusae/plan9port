@@ -578,4 +578,9 @@ Channel	*cwarn;		/* chan(void*)[1] (really chan(unit)[1]) */
 
 QLock	editoutlk;
 
+#ifndef Extern
+#define Extern extern
+#endif
+Extern Screen *wscreen;
+
 #define	STACK	65536
