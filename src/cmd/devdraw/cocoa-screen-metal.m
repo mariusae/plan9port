@@ -253,14 +253,6 @@ struct Cursors {
 
 	cs = [v pointerValue];
 	c = cs->c;
-	if(!c) {
-		[[NSCursor arrowCursor] set];
-		currentCursor = [NSCursor arrowCursor];
-		[win invalidateCursorRectsForView:myContent];
-//		[NSCursor unhide];
-		return;
-	}
-
 	if(!c)
 		c = &bigarrow;
 	c2 = cs->c2;
