@@ -246,7 +246,7 @@ threadmain(int argc, char *argv[])
 	if(plumbeditfd < 0)
 		fprint(2, "acme: can't initialize plumber: %r\n");
 	else{
-		cplumb = chancreate(sizeof(Plumbmsg*), 0);
+		cplumb = chancreate(sizeof(Plumbmsg*), 0); g
 		threadcreate(plumbproc, nil, STACK);
 	}
 	plumbsendfd = plumbopen("send", OWRITE|OCEXEC);
@@ -639,26 +639,16 @@ mousethread(void *v)
 				goto Continue;
 			}
 			/* scroll buttons, wheels, etc. */
-			if(w != nil && (m.scroll != 0)){
-/*				if(m.scroll != 0){*/
+			if(w != nil && (m.buttons & (8|16))){
+					if(m.buttons & 8)
+							but = Kscrolloneup;
+					else
+							but = Kscrollonedown;
 					winlock(w, 'M');
 					t->eq0 = ~0;
-					xtextscroll(t, m.scroll);
+					texttype(t, but);
 					winunlock(w);
 					goto Continue;
-/*				}*/
-
-/*
-				if(m.buttons & 8)
-					but = Kscrolloneup;
-				else
-					but = Kscrollonedown;
-				winlock(w, 'M');
-				t->eq0 = ~0;
-				texttype(t, but);
-				winunlock(w);
-				goto Continue;
-*/
 			}
 			if(ptinrect(m.xy, t->scrollr)){
 				if(but){
