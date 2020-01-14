@@ -46,7 +46,7 @@ unicode(Rune *k)
  * is minus the required n.
  */
 int
-_latin1(Rune *k, int n)
+latin1(Rune *k, int n)
 {
 	struct cvlist *l;
 	int c;
@@ -58,7 +58,7 @@ _latin1(Rune *k, int n)
 		else
 			return -5;
 	}
-	
+
 	for(l=latintab; l->ld!=0; l++)
 		if(k[0] == l->ld[0]){
 			if(n == 1)

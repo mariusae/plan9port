@@ -477,9 +477,9 @@ includename(Text *t, Rune *r, int n)
 Runestr
 dirname(Text *t, Rune *r, int n)
 {
-	Rune *b, c;
-	uint m, nt;
-	int slash;
+	Rune *b;
+	uint nt;
+	int slash, i;
 	Runestr tmp;
 
 	b = nil;
@@ -490,15 +490,13 @@ dirname(Text *t, Rune *r, int n)
 		goto Rescue;
 	if(n>=1 && r[0]=='/')
 		goto Rescue;
-	b = runemalloc(nt+n+1);
-	bufread(&t->w->tag.file->b, 0, b, nt);
+	b = parsetag(t->w, n, &i);
 	slash = -1;
-	for(m=0; m<nt; m++){
-		c = b[m];
-		if(c == '/')
-			slash = m;
-		if(c==' ' || c=='\t')
+	for(i--; i >= 0; i--){
+		if(b[i] == '/'){
+			slash = i;
 			break;
+		}
 	}
 	if(slash < 0)
 		goto Rescue;
@@ -612,7 +610,7 @@ expandfile(Text *t, uint q0, uint q1, Expand *e)
 	if(nname == -1)
 		nname = n;
 	for(i=0; i<nname; i++)
-		if(!isfilec(r[i]))
+		if(!isfilec(r[i]) && r[i] != ' ')
 			goto Isntfile;
 	/*
 	 * See if it's a file name in <>, and turn that into an include

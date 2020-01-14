@@ -22,11 +22,69 @@ static int canreadfd(int);
 int
 _displayconnect(Display *d)
 {
-	int pid, p[2];
-	
+	int pid, p[2], fd, nbuf, n;
+	char *wsysid, *addr, *id;
+	uchar *buf;
+	Wsysmsg w;
+
 	fmtinstall('W', drawfcallfmt);
 	fmtinstall('H', encodefmt);
-	
+
+	wsysid = getenv("wsysid");
+	if(wsysid != nil) {
+		// Connect to running devdraw service.
+		// wsysid=devdrawname/id
+		id = strchr(wsysid, '/');
+		if(id == nil) {
+			werrstr("invalid $wsysid");
+			return -1;
+		}
+		*id++ = '\0';
+		addr = smprint("unix!%s/%s", getns(), wsysid);
+		if(addr == nil)
+			return -1;
+		fd = dial(addr, 0, 0, 0);
+		free(addr);
+		if(fd < 0)
+			return -1;
+		nbuf = strlen(id) + 500;
+		buf = malloc(nbuf);
+		if(buf == nil) {
+			close(fd);
+			return -1;
+		}
+		memset(&w, 0, sizeof w);
+		w.type = Tctxt;
+		w.id = id;
+		n = convW2M(&w, buf, nbuf);
+		if(write(fd, buf, n) != n) {
+			close(fd);
+			werrstr("wsys short write: %r");
+			return -1;
+		}
+		n = readwsysmsg(fd, buf, nbuf);
+		if(n < 0) {
+			close(fd);
+			werrstr("wsys short read: %r");
+			return -1;
+		}
+		if(convM2W(buf, n, &w) <= 0) {
+			close(fd);
+			werrstr("wsys decode error");
+			return -1;
+		}
+		if(w.type != Rctxt) {
+			close(fd);
+			if(w.type == Rerror)
+				werrstr("%s", w.error);
+			else
+				werrstr("wsys rpc phase error (%d)", w.type);
+			return -1;
+		}
+		d->srvfd = fd;
+		return 0;
+	}
+
 	if(pipe(p) < 0)
 		return -1;
 	if((pid=fork()) < 0){
@@ -36,6 +94,10 @@ _displayconnect(Display *d)
 	}
 	if(pid == 0){
 		char *devdraw;
+
+		devdraw = getenv("DEVDRAW");
+		if(devdraw == nil)
+			devdraw = "devdraw";
 		close(p[0]);
 		dup(p[1], 0);
 		dup(p[1], 1);
@@ -84,7 +146,7 @@ _displaymux(Display *d)
 	d->mux->settag = drawsettag;
 	d->mux->aux = d;
 	muxinit(d->mux);
-	
+
 	return 0;
 }
 
@@ -94,7 +156,7 @@ drawsend(Mux *mux, void *vmsg)
 	int n;
 	uchar *msg;
 	Display *d;
-	
+
 	msg = vmsg;
 	GET(msg, n);
 	d = mux->aux;
@@ -148,7 +210,7 @@ drawgettag(Mux *mux, void *vmsg)
 {
 	uchar *msg;
 	USED(mux);
-	
+
 	msg = vmsg;
 	return msg[4];
 }
@@ -158,7 +220,7 @@ drawsettag(Mux *mux, void *vmsg, uint tag)
 {
 	uchar *msg;
 	USED(mux);
-	
+
 	msg = vmsg;
 	msg[4] = tag;
 	return 0;
@@ -169,7 +231,7 @@ displayrpc(Display *d, Wsysmsg *tx, Wsysmsg *rx, void **freep)
 {
 	int n, nn;
 	void *tpkt, *rpkt;
-	
+
 	n = sizeW2M(tx);
 	tpkt = malloc(n);
 	if(freep)
@@ -295,8 +357,8 @@ int
 _displaycursor(Display *d, Cursor *c, Cursor2 *c2)
 {
 	Wsysmsg tx, rx;
-	
-	tx.type = Tcursor;
+
+	tx.type = Tcursor2;
 	if(c == nil){
 		memset(&tx.cursor, 0, sizeof tx.cursor);
 		memset(&tx.cursor2, 0, sizeof tx.cursor2);
@@ -316,7 +378,7 @@ int
 _displaybouncemouse(Display *d, Mouse *m)
 {
 	Wsysmsg tx, rx;
-	
+
 	tx.type = Tbouncemouse;
 	tx.mouse = *m;
 	return displayrpc(d, &tx, &rx, nil);
@@ -326,7 +388,7 @@ int
 _displaylabel(Display *d, char *label)
 {
 	Wsysmsg tx, rx;
-	
+
 	tx.type = Tlabel;
 	tx.label = label;
 	return displayrpc(d, &tx, &rx, nil);
@@ -338,7 +400,7 @@ _displayrdsnarf(Display *d)
 	void *p;
 	char *s;
 	Wsysmsg tx, rx;
-	
+
 	tx.type = Trdsnarf;
 	if(displayrpc(d, &tx, &rx, &p) < 0)
 		return nil;
@@ -351,7 +413,7 @@ int
 _displaywrsnarf(Display *d, char *snarf)
 {
 	Wsysmsg tx, rx;
-	
+
 	tx.type = Twrsnarf;
 	tx.snarf = snarf;
 	return displayrpc(d, &tx, &rx, nil);
@@ -362,7 +424,7 @@ _displayrddraw(Display *d, void *v, int n)
 {
 	void *p;
 	Wsysmsg tx, rx;
-	
+
 	tx.type = Trddraw;
 	tx.count = n;
 	if(displayrpc(d, &tx, &rx, &p) < 0)
@@ -376,7 +438,7 @@ int
 _displaywrdraw(Display *d, void *v, int n)
 {
 	Wsysmsg tx, rx;
-	
+
 	tx.type = Twrdraw;
 	tx.count = n;
 	tx.data = v;
@@ -398,7 +460,7 @@ int
 _displayresize(Display *d, Rectangle r)
 {
 	Wsysmsg tx, rx;
-	
+
 	tx.type = Tresize;
 	tx.rect = r;
 	return displayrpc(d, &tx, &rx, nil);
@@ -409,7 +471,7 @@ canreadfd(int fd)
 {
 	fd_set rs, ws, xs;
 	struct timeval tv;
-	
+
 	FD_ZERO(&rs);
 	FD_ZERO(&ws);
 	FD_ZERO(&xs);
@@ -423,4 +485,3 @@ canreadfd(int fd)
 		return 1;
 	return 0;
 }
-

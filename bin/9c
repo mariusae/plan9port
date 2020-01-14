@@ -14,6 +14,10 @@ usegcc()
 		-Wno-comment \
 		-Wno-sign-compare \
 		-Wno-unknown-pragmas \
+		-Wno-misleading-indentation \
+		-Wno-stringop-truncation \
+		-Wno-stringop-overflow \
+		-Wno-format-truncation \
 		-fno-omit-frame-pointer \
 		-fsigned-char \
 	"
@@ -79,9 +83,8 @@ useclang()
 
 tag="${SYSNAME:-`uname`}-${OBJTYPE:-`uname -m`}-${CC9:-cc}"
 case "$tag" in
-*FreeBSD*gcc*)	usegcc ;;
-*FreeBSD*clang*)	useclang ;;
-*DragonFly*|*BSD*)	usegcc ;;
+*DragonFly*gcc*|*BSD*gcc*)	usegcc ;;
+*DragonFly*clang|*BSD*clang*)	useclang ;;
 *Darwin-x86_64*)
 		useclang
 		cflags="$ngflags -g3 -m64"

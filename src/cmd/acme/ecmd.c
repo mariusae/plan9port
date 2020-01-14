@@ -28,7 +28,7 @@ int	append(File*, Cmd*, long);
 int	pdisplay(File*);
 void	pfilename(File*);
 void	looper(File*, Cmd*, int);
-void	filelooper(Cmd*, int);
+void	filelooper(Text*, Cmd*, int);
 void	linelooper(File*, Cmd*);
 Address	lineaddr(long, Address, int);
 int	filematch(File*, String*);
@@ -584,7 +584,7 @@ X_cmd(Text *t, Cmd *cp)
 {
 	USED(t);
 
-	filelooper(cp, cp->cmdc=='X');
+	filelooper(t, cp, cp->cmdc=='X');
 	return TRUE;
 }
 
@@ -633,8 +633,8 @@ runpipe(Text *t, int cmd, Rune *cr, int ncr, int state)
 	/*
 	 * The editoutlk exists only so that we can tell when
 	 * the editout file has been closed.  It can get closed *after*
-	 * the process exits because, since the process cannot be 
-	 * connected directly to editout (no 9P kernel support), 
+	 * the process exits because, since the process cannot be
+	 * connected directly to editout (no 9P kernel support),
 	 * the process is actually connected to a pipe to another
 	 * process (arranged via 9pserve) that reads from the pipe
 	 * and then writes the data in the pipe to editout using
@@ -704,7 +704,7 @@ printposn(Text *t, int mode)
 
 	if (t != nil && t->file != nil && t->file->name != nil)
 		warning(nil, "%.*S:", t->file->nname, t->file->name);
-	
+
 	switch(mode) {
 	case PosnChars:
 		warning(nil, "#%d", addr.r.q0);
@@ -712,7 +712,7 @@ printposn(Text *t, int mode)
 			warning(nil, ",#%d", addr.r.q1);
 		warning(nil, "\n");
 		return;
-	
+
 	default:
 	case PosnLine:
 		l1 = 1+nlcount(t, 0, addr.r.q0, nil);
@@ -978,9 +978,10 @@ alllocker(Window *w, void *v)
 }
 
 void
-filelooper(Cmd *cp, int XY)
+filelooper(Text *t, Cmd *cp, int XY)
 {
 	int i;
+	Text *targ;
 
 	if(Glooping++)
 		editerror("can't nest %c command", "YX"[XY]);
@@ -1001,8 +1002,26 @@ filelooper(Cmd *cp, int XY)
 	 */
 	allwindows(alllocker, (void*)1);
 	globalincref = 1;
-	for(i=0; i<loopstruct.nw; i++)
-		cmdexec(&loopstruct.w[i]->body, cp->u.cmd);
+	
+	/*
+	 * Unlock the window running the X command.
+	 * We'll need to lock and unlock each target window in turn.
+	 */
+	if(t && t->w)
+		winunlock(t->w);
+	
+	for(i=0; i<loopstruct.nw; i++) {
+		targ = &loopstruct.w[i]->body;
+		if(targ && targ->w)
+			winlock(targ->w, cp->cmdc);
+		cmdexec(targ, cp->u.cmd);
+		if(targ && targ->w)
+			winunlock(targ->w);
+	}
+
+	if(t && t->w)
+		winlock(t->w, cp->cmdc);
+
 	allwindows(alllocker, (void*)0);
 	globalincref = 0;
 	free(loopstruct.w);

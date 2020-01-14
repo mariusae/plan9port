@@ -12,13 +12,14 @@
 
 #include <u.h>
 #include <libc.h>
-#include  "cocoa-thread.h"
+#include <thread.h>
 #include <draw.h>
 #include <memdraw.h>
-#include <keyboard.h>
+#include <memlayer.h>
+#include <mouse.h>
 #include <cursor.h>
-#include "cocoa-screen.h"
-#include "osx-keycodes.h"
+#include <keyboard.h>
+#include <drawfcall.h>
 #include "devdraw.h"
 #include "bigarrow.h"
 #include "glendapng.h"
@@ -26,81 +27,29 @@
 AUTOFRAMEWORK(Cocoa)
 AUTOFRAMEWORK(Metal)
 AUTOFRAMEWORK(QuartzCore)
+AUTOFRAMEWORK(CoreFoundation)
 
 #define LOG	if(0)NSLog
+
+// TODO: Maintain list of views for dock menu.
 
 static void setprocname(const char*);
 static uint keycvt(uint);
 static uint msec(void);
-static Memimage* initimg(void);
 
-void
-usage(void)
-{
-	fprint(2, "usage: devdraw (don't run directly)\n");
-	threadexitsall("usage");
-}
+@class DrawView;
+@class DrawLayer;
 
-@interface AppDelegate : NSObject<NSApplicationDelegate,NSWindowDelegate>
-+ (void)callservep9p:(id)arg;
-+ (void)makewin:(NSValue *)v;
-+ (void)callkicklabel:(NSString *)v;
-+ (void)callsetNeedsDisplayInRect:(NSValue *)v;
-+ (void)callsetcursor:(NSValue *)v;
+@interface AppDelegate : NSObject<NSApplicationDelegate>
 @end
-@interface DevDrawView : NSView<NSTextInputClient>
-- (void)clearInput;
-- (void)getmouse:(NSEvent *)e;
-- (void)sendmouse:(NSUInteger)b;
-- (void)scrollmouse:(NSUInteger)b by:(NSUInteger)amount;
-- (void)resetLastInputRect;
-- (void)enlargeLastInputRect:(NSRect)r;
-@end
-@interface DrawLayer : CAMetalLayer
-@end
-@interface appwin : NSWindow @end
-
 
 static AppDelegate *myApp = NULL;
-static DevDrawView *myContent = NULL;
-static NSWindow *win = NULL;
-static NSCursor *currentCursor = NULL;
-
-static DrawLayer *layer;
-static id<MTLDevice> device;
-static id<MTLCommandQueue> commandQueue;
-static id<MTLTexture> texture;
-
-static Memimage *img = NULL;
-
-static QLock snarfl;
 
 void
-threadmain(int argc, char **argv)
+gfx_main(void)
 {
-	/*
-	 * Move the protocol off stdin/stdout so that
-	 * any inadvertent prints don't screw things up.
-	 */
-	dup(0,3);
-	dup(1,4);
-	close(0);
-	close(1);
-	open("/dev/null", OREAD);
-	open("/dev/null", OWRITE);
-
-	ARGBEGIN{
-	case 'D':		/* for good ps -a listings */
-		break;
-	case 'f':		/* fall through for backward compatibility */
-	case 'g':
-	case 'b':
-		break;
-	default:
-		usage();
-	}ARGEND
-
-	setprocname(argv0);
+	if(client0)
+		setprocname(argv0);
 
 	@autoreleasepool{
 		[NSApplication sharedApplication];
@@ -111,16 +60,166 @@ threadmain(int argc, char **argv)
 	}
 }
 
-@implementation AppDelegate
 
-+ (void)callservep9p:(id)arg
+void
+rpc_shutdown(void)
 {
-	servep9p();
-	[NSApp terminate:self];
+	[NSApp terminate:myApp];
 }
 
-+ (void)makewin:(NSValue *)v
+@implementation AppDelegate
+- (void)applicationDidFinishLaunching:(id)arg
 {
+	NSMenu *m, *sm;
+	NSData *d;
+	NSImage *i;
+
+	LOG(@"applicationDidFinishLaunching");
+
+	sm = [NSMenu new];
+	[sm addItemWithTitle:@"Toggle Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
+	[sm addItemWithTitle:@"Hide" action:@selector(hide:) keyEquivalent:@"h"];
+	[sm addItemWithTitle:@"Quit" action:@selector(terminate:) keyEquivalent:@"q"];
+	m = [NSMenu new];
+	[m addItemWithTitle:@"DEVDRAW" action:NULL keyEquivalent:@""];
+	[m setSubmenu:sm forItem:[m itemWithTitle:@"DEVDRAW"]];
+	[NSApp setMainMenu:m];
+
+	d = [[NSData alloc] initWithBytes:glenda_png length:(sizeof glenda_png)];
+	i = [[NSImage alloc] initWithData:d];
+	[NSApp setApplicationIconImage:i];
+	[[NSApp dockTile] display];
+
+	gfx_started();
+}
+
+- (NSApplicationPresentationOptions)window:(id)arg
+		willUseFullScreenPresentationOptions:(NSApplicationPresentationOptions)proposedOptions {
+	NSApplicationPresentationOptions o;
+	o = proposedOptions;
+	o &= ~(NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar);
+	o |= NSApplicationPresentationHideDock | NSApplicationPresentationHideMenuBar;
+	return o;
+}
+
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)theApplication {
+	return client0 != nil;
+}
+@end
+
+@interface DrawLayer : CAMetalLayer
+@property (nonatomic, retain) id<MTLCommandQueue> cmd;
+@property (nonatomic, retain) id<MTLTexture> texture;
+@end
+
+@implementation DrawLayer
+- (void)display
+{
+	LOG(@"display");
+	LOG(@"display query drawable");
+
+	@autoreleasepool{
+		id<CAMetalDrawable> drawable = [self nextDrawable];
+		if(!drawable){
+			LOG(@"display couldn't get drawable");
+			[self setNeedsDisplay];
+			return;
+		}
+
+		LOG(@"display got drawable");
+
+		id<MTLCommandBuffer> cbuf = [self.cmd commandBuffer];
+		id<MTLBlitCommandEncoder> blit = [cbuf blitCommandEncoder];
+		[blit copyFromTexture:self.texture
+			sourceSlice:0
+			sourceLevel:0
+			sourceOrigin:MTLOriginMake(0, 0, 0)
+			sourceSize:MTLSizeMake(self.texture.width, self.texture.height, self.texture.depth)
+			toTexture:drawable.texture
+			destinationSlice:0
+			destinationLevel:0
+			destinationOrigin:MTLOriginMake(0, 0, 0)];
+		[blit endEncoding];
+
+		[cbuf presentDrawable:drawable];
+		drawable = nil;
+		[cbuf addCompletedHandler:^(id<MTLCommandBuffer> cmdBuff){
+			if(cmdBuff.error){
+				NSLog(@"command buffer finished with error: %@",
+					cmdBuff.error.localizedDescription);
+			}else
+				LOG(@"command buffer finishes present drawable");
+		}];
+		[cbuf commit];
+	}
+	LOG(@"display commit");
+}
+@end
+
+@interface DrawView : NSView<NSTextInputClient,NSWindowDelegate>
+@property (nonatomic, assign) Client *client;
+@property (nonatomic, retain) DrawLayer *dlayer;
+@property (nonatomic, retain) NSWindow *win;
+@property (nonatomic, retain) NSCursor *currentCursor;
+@property (nonatomic, assign) Memimage *img;
+
+- (id)attach:(Client*)client winsize:(char*)winsize label:(char*)label;
+- (void)topwin;
+- (void)setlabel:(char*)label;
+- (void)setcursor:(Cursor*)c cursor2:(Cursor2*)c2;
+- (void)setmouse:(Point)p;
+- (void)clearInput;
+- (void)getmouse:(NSEvent*)e;
+- (void)sendmouse:(NSUInteger)b;
+- (void)resetLastInputRect;
+- (void)enlargeLastInputRect:(NSRect)r;
+@end
+
+@implementation DrawView
+{
+	NSMutableString *_tmpText;
+	NSRange _markedRange;
+	NSRange _selectedRange;
+	NSRect _lastInputRect;	// The view is flipped, this is not.
+	BOOL _tapping;
+	NSUInteger _tapFingers;
+	NSUInteger _tapTime;
+}
+
+- (id)init
+{
+	LOG(@"View init");
+	self = [super init];
+	[self setAllowedTouchTypes:NSTouchTypeMaskDirect|NSTouchTypeMaskIndirect];
+	_tmpText = [[NSMutableString alloc] initWithCapacity:2];
+	_markedRange = NSMakeRange(NSNotFound, 0);
+	_selectedRange = NSMakeRange(0, 0);
+	return self;
+}
+
+- (CALayer*)makeBackingLayer { return [DrawLayer layer]; }
+- (BOOL)wantsUpdateLayer { return YES; }
+- (BOOL)isOpaque { return YES; }
+- (BOOL)isFlipped { return YES; }
+- (BOOL)acceptsFirstResponder { return YES; }
+
+// rpc_attach allocates a new screen window with the given label and size
+// and attaches it to client c (by setting c->view).
+Memimage*
+rpc_attach(Client *c, char *label, char *winsize)
+{
+	LOG(@"attachscreen(%s, %s)", label, winsize);
+
+	dispatch_sync(dispatch_get_main_queue(), ^(void) {
+		@autoreleasepool {
+			DrawView *view = [[DrawView new] attach:c winsize:winsize label:label];
+			[view initimg];
+		}
+	});
+	return ((__bridge DrawView*)c->view).img;
+}
+
+- (id)attach:(Client*)client winsize:(char*)winsize label:(char*)label {
 	NSRect r, sr;
 	Rectangle wr;
 	int set;
@@ -132,15 +231,12 @@ threadmain(int argc, char **argv)
 		| NSWindowStyleMaskMiniaturizable
 		| NSWindowStyleMaskResizable;
 
+	s = winsize;
 	sr = [[NSScreen mainScreen] frame];
 	r = [[NSScreen mainScreen] visibleFrame];
 
-	s = [v pointerValue];
 	LOG(@"makewin(%s)", s);
-	if(s && *s){
-		if(parsewinsize(s, &wr, &set) < 0)
-			sysfatal("%r");
-	}else{
+	if(s == nil || *s == '\0' || parsewinsize(s, &wr, &set) < 0) {
 		wr = Rect(0, 0, sr.size.width*2/3, sr.size.height*2/3);
 		set = 0;
 	}
@@ -151,7 +247,7 @@ threadmain(int argc, char **argv)
 	r.size.height = fmin(Dy(wr), r.size.height);
 	r = [NSWindow contentRectForFrameRect:r styleMask:Winstyle];
 
-	win = [[appwin alloc]
+	NSWindow *win = [[NSWindow alloc]
 		initWithContentRect:r
 		styleMask:Winstyle
 		backing:NSBackingStoreBuffered defer:NO];
@@ -164,14 +260,17 @@ threadmain(int argc, char **argv)
 	[win setOpaque:YES];
 	[win setRestorable:NO];
 	[win setAcceptsMouseMovedEvents:YES];
-	[win setDelegate:myApp];
 
-	myContent = [DevDrawView new];
-	[win setContentView:myContent];
-	[myContent setWantsLayer:YES];
-	[myContent setLayerContentsRedrawPolicy:NSViewLayerContentsRedrawOnSetNeedsDisplay];
+	client->view = CFBridgingRetain(self);
+	self.client = client;
+	self.win = win;
+	self.currentCursor = nil;
+	[win setContentView:self];
+	[win setDelegate:self];
+	[self setWantsLayer:YES];
+	[self setLayerContentsRedrawPolicy:NSViewLayerContentsRedrawOnSetNeedsDisplay];
 
-	device = nil;
+	id<MTLDevice> device = nil;
 	allDevices = MTLCopyAllDevices();
 	for(id mtlDevice in allDevices) {
 		if ([mtlDevice isLowPower] && ![mtlDevice isRemovable]) {
@@ -181,18 +280,20 @@ threadmain(int argc, char **argv)
 	}
 	if(!device)
 		device = MTLCreateSystemDefaultDevice();
+	DrawLayer *layer = (DrawLayer*)[self layer];
 
-	commandQueue = [device newCommandQueue];
-
-	layer = (DrawLayer *)[myContent layer];
+	self.dlayer = layer;
 	layer.device = device;
+	layer.cmd = [device newCommandQueue];
 	layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
 	layer.framebufferOnly = YES;
 	layer.opaque = YES;
 
 	// We use a default transparent layer on top of the CAMetalLayer.
 	// This seems to make fullscreen applications behave.
-	{
+	// Specifically, without this code if you enter full screen with Cmd-F,
+	// the screen goes black until the first mouse click.
+	if(1) {
 		CALayer *stub = [CALayer layer];
 		stub.frame = CGRectMake(0, 0, 1, 1);
 		[stub setNeedsDisplay];
@@ -201,63 +302,77 @@ threadmain(int argc, char **argv)
 
 	[NSEvent setMouseCoalescingEnabled:NO];
 
-	[win registerForDraggedTypes:[NSArray arrayWithObjects:
-		NSFilenamesPboardType, nil]];
+	[self topwin];
+	[self setlabel:label];
+	[self setcursor:nil cursor2:nil];
 
-	topwin();
+	return self;
 }
 
-+ (void)callkicklabel:(NSString *)s
+// rpc_topwin moves the window to the top of the desktop.
+// Called from an RPC thread with no client lock held.
+void
+rpc_topwin(Client *c)
 {
-	LOG(@"callkicklabel(%@)", s);
-	[win setTitle:s];
-	[[NSApp dockTile] setBadgeLabel:s];
-}
-
-
-+ (void)callsetNeedsDisplayInRect:(NSValue *)v
-{
-	NSRect r;
-	dispatch_time_t time;
-
-	r = [v rectValue];
-	LOG(@"callsetNeedsDisplayInRect(%g, %g, %g, %g)", r.origin.x, r.origin.y, r.size.width, r.size.height);
-	r = [win convertRectFromBacking:r];
-	LOG(@"setNeedsDisplayInRect(%g, %g, %g, %g)", r.origin.x, r.origin.y, r.size.width, r.size.height);
-	[layer setNeedsDisplayInRect:r];
-
-	time = dispatch_time(DISPATCH_TIME_NOW, 16 * NSEC_PER_MSEC);
-	dispatch_after(time, dispatch_get_main_queue(), ^(void){
-		[layer setNeedsDisplayInRect:r];
+	DrawView *view = (__bridge DrawView*)c->view;
+	dispatch_sync(dispatch_get_main_queue(), ^(void) {
+		[view topwin];
 	});
-
-	[myContent enlargeLastInputRect:r];
 }
 
-typedef struct Cursors Cursors;
-struct Cursors {
-	Cursor *c;
-	Cursor2 *c2;
-};
+- (void)topwin {
+	[self.win makeKeyAndOrderFront:nil];
+	[NSApp activateIgnoringOtherApps:YES];
+}
 
-+ (void)callsetcursor:(NSValue *)v
+// rpc_setlabel updates the client window's label.
+// If label == nil, the call is a no-op.
+// Called from an RPC thread with no client lock held.
+void
+rpc_setlabel(Client *client, char *label)
 {
-	Cursors *cs;
-	Cursor *c;
-	Cursor2 *c2;
+	DrawView *view = (__bridge DrawView*)client->view;
+	dispatch_sync(dispatch_get_main_queue(), ^(void){
+		[view setlabel:label];
+	});
+}
+
+- (void)setlabel:(char*)label {
+	LOG(@"setlabel(%s)", label);
+	if(label == nil)
+		return;
+
+	@autoreleasepool{
+		NSString *s = [[NSString alloc] initWithUTF8String:label];
+		[self.win setTitle:s];
+		if(client0)
+			[[NSApp dockTile] setBadgeLabel:s];
+	}
+}
+
+// rpc_setcursor updates the client window's cursor image.
+// Either c and c2 are both non-nil, or they are both nil to use the default arrow.
+// Called from an RPC thread with no client lock held.
+void
+rpc_setcursor(Client *client, Cursor *c, Cursor2 *c2)
+{
+	DrawView *view = (__bridge DrawView*)client->view;
+	dispatch_sync(dispatch_get_main_queue(), ^(void){
+		[view setcursor:c cursor2:c2];
+	});
+}
+
+- (void)setcursor:(Cursor*)c cursor2:(Cursor2*)c2 {
+	if(!c) {
+		c = &bigarrow;
+		c2 = &bigarrow2;
+	}
+
 	NSBitmapImageRep *r, *r2;
 	NSImage *i;
 	NSPoint p;
 	uchar *plane[5], *plane2[5];
 	uint b;
-
-	cs = [v pointerValue];
-	c = cs->c;
-	if(!c)
-		c = &bigarrow;
-	c2 = cs->c2;
-	if(!c2)
-		c2 = &bigarrow2;
 
 	r = [[NSBitmapImageRep alloc]
 		initWithBitmapDataPlanes:nil
@@ -293,164 +408,169 @@ struct Cursors {
 		plane2[1][b] = c2->set[b] | c2->clr[b];
 	}
 
-	// For checking out the cursor bitmap image
-/*
-	static BOOL saveimg = YES;
-	if(saveimg){
+	static BOOL debug = NO;
+	if(debug){
 		NSData *data = [r representationUsingType: NSBitmapImageFileTypeBMP properties: @{}];
 		[data writeToFile: @"/tmp/r.bmp" atomically: NO];
 		data = [r2 representationUsingType: NSBitmapImageFileTypeBMP properties: @{}];
 		[data writeToFile: @"/tmp/r2.bmp" atomically: NO];
-		saveimg = NO;
+		debug = NO;
 	}
-*/
 
 	i = [[NSImage alloc] initWithSize:NSMakeSize(16, 16)];
 	[i addRepresentation:r2];
 	[i addRepresentation:r];
 
 	p = NSMakePoint(-c->offset.x, -c->offset.y);
-	currentCursor = [[NSCursor alloc] initWithImage:i hotSpot:p];
-
-	[win invalidateCursorRectsForView:myContent];
+	self.currentCursor = [[NSCursor alloc] initWithImage:i hotSpot:p];
+	[self.win invalidateCursorRectsForView:self];
 }
 
-- (void)applicationDidFinishLaunching:(id)arg
-{
-	NSMenu *m, *sm;
-	NSData *d;
-	NSImage *i;
+- (void)initimg {
+	@autoreleasepool {
+		CGFloat scale;
+		NSSize size;
+		MTLTextureDescriptor *textureDesc;
 
-	LOG(@"applicationDidFinishLaunching");
+		size = [self convertSizeToBacking:[self bounds].size];
+		self.client->mouserect = Rect(0, 0, size.width, size.height);
 
-	sm = [NSMenu new];
-	[sm addItemWithTitle:@"Toggle Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
-	[sm addItemWithTitle:@"Hide" action:@selector(hide:) keyEquivalent:@"h"];
-	[sm addItemWithTitle:@"Quit" action:@selector(terminate:) keyEquivalent:@"q"];
-	m = [NSMenu new];
-	[m addItemWithTitle:@"DEVDRAW" action:NULL keyEquivalent:@""];
-	[m setSubmenu:sm forItem:[m itemWithTitle:@"DEVDRAW"]];
-	[NSApp setMainMenu:m];
+		LOG(@"initimg %.0f %.0f", size.width, size.height);
+		self.img = allocmemimage(self.client->mouserect, XRGB32);
 
-	d = [[NSData alloc] initWithBytes:glenda_png length:(sizeof glenda_png)];
-	i = [[NSImage alloc] initWithData:d];
-	[NSApp setApplicationIconImage:i];
-	[[NSApp dockTile] display];
+		if(self.img == nil)
+			panic("allocmemimage: %r");
+		if(self.img->data == nil)
+			panic("img->data == nil");
 
-	[NSThread
-		detachNewThreadSelector:@selector(callservep9p:)
-		toTarget:[self class] withObject:nil];
-}
+		textureDesc = [MTLTextureDescriptor
+			texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+			width:size.width
+			height:size.height
+			mipmapped:NO];
+		textureDesc.allowGPUOptimizedContents = YES;
+		textureDesc.usage = MTLTextureUsageShaderRead;
+		textureDesc.cpuCacheMode = MTLCPUCacheModeWriteCombined;
+		self.dlayer.texture = [self.dlayer.device newTextureWithDescriptor:textureDesc];
 
-- (NSApplicationPresentationOptions)window:(id)arg
-		willUseFullScreenPresentationOptions:(NSApplicationPresentationOptions)proposedOptions {
-	NSApplicationPresentationOptions o;
-	o = proposedOptions;
-	o &= ~(NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar);
-	o |= NSApplicationPresentationHideDock | NSApplicationPresentationHideMenuBar;
-	return o;
-}
+		scale = [self.win backingScaleFactor];
+		[self.dlayer setDrawableSize:size];
+		[self.dlayer setContentsScale:scale];
+		// NOTE: This is not really the display DPI.
 
-- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)theApplication {
-	return YES;
-}
-
-- (void)windowDidResize:(NSNotification *)notification
-{
-	if(![myContent inLiveResize] && img) {
-		resizeimg();
+		// On retina, scale is 2; otherwise it is 1.
+		// This formula gives us 220 for retina, 110 otherwise.
+		// That's not quite right but it's close to correct.
+		// https://en.wikipedia.org/wiki/Retina_display#Models
+		self.client->displaydpi = scale * 110;
 	}
 }
 
-- (void)windowDidBecomeKey:(id)arg
+// rpc_flush flushes changes to view.img's rectangle r
+// to the on-screen window, making them visible.
+// Called from an RPC thread with no client lock held.
+void
+rpc_flush(Client *client, Rectangle r)
 {
-        [myContent sendmouse:0];
+	DrawView *view = (__bridge DrawView*)client->view;
+	dispatch_async(dispatch_get_main_queue(), ^(void){
+		[view flush:r];
+	});
 }
 
+- (void)flush:(Rectangle)r {
+	@autoreleasepool{
+		if(!rectclip(&r, Rect(0, 0, self.dlayer.texture.width, self.dlayer.texture.height)) || !rectclip(&r, self.img->r))
+			return;
+
+		// self.client->drawlk protects the pixel data in self.img.
+		// In addition to avoiding a technical data race,
+		// the lock avoids drawing partial updates, which makes
+		// animations like sweeping windows much less flickery.
+		qlock(&self.client->drawlk);
+		[self.dlayer.texture
+			replaceRegion:MTLRegionMake2D(r.min.x, r.min.y, Dx(r), Dy(r))
+			mipmapLevel:0
+			withBytes:byteaddr(self.img, Pt(r.min.x, r.min.y))
+			bytesPerRow:self.img->width*sizeof(u32int)];
+		qunlock(&self.client->drawlk);
+
+		NSRect nr = NSMakeRect(r.min.x, r.min.y, Dx(r), Dy(r));
+		dispatch_time_t time;
+
+		LOG(@"callsetNeedsDisplayInRect(%g, %g, %g, %g)", nr.origin.x, nr.origin.y, nr.size.width, nr.size.height);
+		nr = [self.win convertRectFromBacking:nr];
+		LOG(@"setNeedsDisplayInRect(%g, %g, %g, %g)", nr.origin.x, nr.origin.y, nr.size.width, nr.size.height);
+		[self.dlayer setNeedsDisplayInRect:nr];
+
+		time = dispatch_time(DISPATCH_TIME_NOW, 16 * NSEC_PER_MSEC);
+		dispatch_after(time, dispatch_get_main_queue(), ^(void){
+			[self.dlayer setNeedsDisplayInRect:nr];
+		});
+
+		[self enlargeLastInputRect:nr];
+	}
+}
+
+// rpc_resizeimg forces the client window to discard its current window and make a new one.
+// It is called when the user types Cmd-R to toggle whether retina mode is forced.
+// Called from an RPC thread with no client lock held.
+void
+rpc_resizeimg(Client *c)
+{
+	DrawView *view = (__bridge DrawView*)c->view;
+	dispatch_sync(dispatch_get_main_queue(), ^(void){
+		[view resizeimg];
+	});
+}
+
+- (void)resizeimg {
+	[self initimg];
+	gfx_replacescreenimage(self.client, self.img);
+	[self sendmouse:0];
+}
+
+- (void)windowDidResize:(NSNotification *)notification {
+	if(![self inLiveResize] && self.img) {
+		[self resizeimg];
+
+	}
+}
 @end
 
-@implementation appwin
- - (NSDragOperation)draggingEntered:(id)arg
+- (void)viewDidEndLiveResize
 {
- 	NSPasteboard *b;
- 	NSDragOperation op;
-
- 	op = [arg draggingSourceOperationMask];
- 	b = [arg draggingPasteboard];
-
- 	if([[b types] containsObject:NSFilenamesPboardType])
- 	if(op&NSDragOperationLink)
- 		return NSDragOperationLink;
-
- 	return NSDragOperationNone;
+	[super viewDidEndLiveResize];
+	if(self.img)
+		[self resizeimg];
 }
 
- - (BOOL)performDragOperation:(id)arg
+- (void)viewDidChangeBackingProperties
 {
- 	NSPasteboard *b;
- 	NSArray *files;
- 	int i, n;
-
- 	b = [arg draggingPasteboard];
- 	if(![[b types] containsObject:NSFilenamesPboardType])
- 		return NO;
-
- 	files = [b propertyListForType:NSFilenamesPboardType];
- 	n = [files count];
- 	for(i=0; i<n; i++)
- 	if(fork() == 0)
- 		execl("macedit", "macedit", [[files objectAtIndex:i] UTF8String], nil);
-
- 	return YES;
-}
-@end
-
-@implementation DevDrawView
-{
-	NSMutableString *_tmpText;
-	NSRange _markedRange;
-	NSRange _selectedRange;
-	NSRect _lastInputRect;	// The view is flipped, this is not.
-	BOOL _tapping;
-	NSUInteger _tapFingers;
-	NSUInteger _tapTime;
+	[super viewDidChangeBackingProperties];
+	if(self.img)
+		[self resizeimg];
 }
 
-- (id)init
+// rpc_resizewindow asks for the client window to be resized to size r.
+// Called from an RPC thread with no client lock held.
+void
+rpc_resizewindow(Client *c, Rectangle r)
 {
-	LOG(@"View init");
-	self = [super init];
-	[self setAllowedTouchTypes:NSTouchTypeMaskDirect|NSTouchTypeMaskIndirect];
-	_tmpText = [[NSMutableString alloc] initWithCapacity:2];
-	_markedRange = NSMakeRange(NSNotFound, 0);
-	_selectedRange = NSMakeRange(0, 0);
-	return self;
+	DrawView *view = (__bridge DrawView*)c->view;
+
+	LOG(@"resizewindow %d %d %d %d", r.min.x, r.min.y, Dx(r), Dy(r));
+	dispatch_async(dispatch_get_main_queue(), ^(void){
+		NSSize s;
+
+		s = [view convertSizeFromBacking:NSMakeSize(Dx(r), Dy(r))];
+		[view.win setContentSize:s];
+	});
 }
 
-- (CALayer *)makeBackingLayer
-{
-	LOG(@"makeBackingLayer");
-	return [DrawLayer layer];
-}
 
-- (BOOL)wantsUpdateLayer
-{
-	return YES;
-}
-
-- (BOOL)isOpaque
-{
-	return YES;
-}
-
-- (BOOL)isFlipped
-{
-	return YES;
-}
-
-- (BOOL)acceptsFirstResponder
-{
-	return YES;
+- (void)windowDidBecomeKey:(id)arg {
+        [self sendmouse:0];
 }
 
 - (void)mouseMoved:(NSEvent*)e{ [self getmouse:e];}
@@ -467,7 +587,6 @@ struct Cursors {
 - (void)scrollWheel:(NSEvent*)e
 {
 	NSInteger s;
-	int b;
 
 	s = [e scrollingDeltaY];
 	if(s > 0)
@@ -509,7 +628,7 @@ struct Cursors {
 			b |= 4;
 		[self sendmouse:b];
 	}else if(m & ~omod & NSEventModifierFlagOption)
-		keystroke(Kalt);
+		gfx_keystroke(self.client, Kalt);
 
 	omod = m;
 }
@@ -590,78 +709,75 @@ int stage = 0;
 	if(b == 1){
 		m = [e modifierFlags];
 		if(m & NSEventModifierFlagOption){
-			abortcompose();
-			if(m & NSEventModifierFlagControl){
-				[self sendmouse:2];
-				[self sendmouse:1];
-				return;
-			}
+			gfx_abortcompose(self.client);
 			b = 2;
-		}else if(m & NSEventModifierFlagCommand)
-			b = 4;
-		else if(m & NSEventModifierFlagControl)
-			b = 8;
-	}else if(b == 4){
-		m = [e modifierFlags];
+		}else
 		if(m & NSEventModifierFlagCommand)
-			b = 8;
+			b = 4;
 	}
 	[self sendmouse:b];
 }
 
 - (void)sendmouse:(NSUInteger)b
 {
-	[self scrollmouse:b by:0];
-}
-
-- (void)scrollmouse:(NSUInteger)b by:(NSUInteger)scroll
-{
 	NSPoint p;
 
 	p = [self.window convertPointToBacking:
 		[self.window mouseLocationOutsideOfEventStream]];
-	p.y = Dy(mouserect) - p.y;
+	p.y = Dy(self.client->mouserect) - p.y;
 	// LOG(@"(%g, %g) <- sendmouse(%d)", p.x, p.y, (uint)b);
-	mousetrack(p.x, p.y, b, scroll, msec());
+	gfx_mousetrack(self.client, p.x, p.y, b, msec());
 	if(b && _lastInputRect.size.width && _lastInputRect.size.height)
 		[self resetLastInputRect];
 }
 
+// rpc_setmouse moves the mouse cursor.
+// Called from an RPC thread with no client lock held.
+void
+rpc_setmouse(Client *c, Point p)
+{
+	DrawView *view = (__bridge DrawView*)c->view;
+	dispatch_async(dispatch_get_main_queue(), ^(void){
+		[view setmouse:p];
+	});
+}
+
+- (void)setmouse:(Point)p {
+	@autoreleasepool{
+		NSPoint q;
+
+		LOG(@"setmouse(%d,%d)", p.x, p.y);
+		q = [self.win convertPointFromBacking:NSMakePoint(p.x, p.y)];
+		LOG(@"(%g, %g) <- fromBacking", q.x, q.y);
+		q = [self convertPoint:q toView:nil];
+		LOG(@"(%g, %g) <- toWindow", q.x, q.y);
+		q = [self.win convertPointToScreen:q];
+		LOG(@"(%g, %g) <- toScreen", q.x, q.y);
+		// Quartz has the origin of the "global display
+		// coordinate space" at the top left of the primary
+		// screen with y increasing downward, while Cocoa has
+		// the origin at the bottom left of the primary screen
+		// with y increasing upward.  We flip the coordinate
+		// with a negative sign and shift upward by the height
+		// of the primary screen.
+		q.y = NSScreen.screens[0].frame.size.height - q.y;
+		LOG(@"(%g, %g) <- setmouse", q.x, q.y);
+		CGWarpMouseCursorPosition(NSPointToCGPoint(q));
+		CGAssociateMouseAndMouseCursorPosition(true);
+	}
+}
+
+
 - (void)resetCursorRects {
 	[super resetCursorRects];
-	[self addCursorRect:self.bounds cursor:currentCursor];
-}
-
-- (void)viewDidEndLiveResize
-{
-	[super viewDidEndLiveResize];
-	if(img)
-		resizeimg();
-}
-
-- (void)viewDidChangeBackingProperties
-{
-	[super viewDidChangeBackingProperties];
-	if(img)
-		resizeimg();
+	[self addCursorRect:self.bounds cursor:self.currentCursor];
 }
 
 // conforms to protocol NSTextInputClient
-- (BOOL)hasMarkedText
-{
-	LOG(@"hasMarkedText");
-	return _markedRange.location != NSNotFound;
-}
-- (NSRange)markedRange
-{
-	LOG(@"markedRange");
-	return _markedRange;
-}
-- (NSRange)selectedRange
-{
-	LOG(@"selectedRange");
-	return _selectedRange;
-}
+- (BOOL)hasMarkedText { return _markedRange.location != NSNotFound; }
+- (NSRange)markedRange { return _markedRange; }
+- (NSRange)selectedRange { return _selectedRange; }
+
 - (void)setMarkedText:(id)string
 	selectedRange:(NSRange)sRange
 	replacementRange:(NSRange)rRange
@@ -702,49 +818,50 @@ int stage = 0;
 		LOG(@"text length %ld", _tmpText.length);
 		for(i = 0; i <= _tmpText.length; ++i){
 			if(i == _markedRange.location)
-				keystroke('[');
+				gfx_keystroke(self.client, '[');
 			if(_selectedRange.length){
 				if(i == _selectedRange.location)
-					keystroke('{');
+					gfx_keystroke(self.client, '{');
 				if(i == NSMaxRange(_selectedRange))
-					keystroke('}');
+					gfx_keystroke(self.client, '}');
 				}
 			if(i == NSMaxRange(_markedRange))
-				keystroke(']');
+				gfx_keystroke(self.client, ']');
 			if(i < _tmpText.length)
-				keystroke([_tmpText characterAtIndex:i]);
+				gfx_keystroke(self.client, [_tmpText characterAtIndex:i]);
 		}
 		int l;
 		l = 1 + _tmpText.length - NSMaxRange(_selectedRange)
 			+ (_selectedRange.length > 0);
 		LOG(@"move left %d", l);
 		for(i = 0; i < l; ++i)
-			keystroke(Kleft);
+			gfx_keystroke(self.client, Kleft);
 	}
 
 	LOG(@"text: \"%@\"  (%ld,%ld)  (%ld,%ld)", _tmpText,
 		_markedRange.location, _markedRange.length,
 		_selectedRange.location, _selectedRange.length);
 }
-- (void)unmarkText
-{
+
+- (void)unmarkText {
 	//NSUInteger i;
 	NSUInteger len;
 
 	LOG(@"unmarkText");
 	len = [_tmpText length];
 	//for(i = 0; i < len; ++i)
-	//	keystroke([_tmpText characterAtIndex:i]);
+	//	gfx_keystroke(self.client, [_tmpText characterAtIndex:i]);
 	[_tmpText deleteCharactersInRange:NSMakeRange(0, len)];
 	_markedRange = NSMakeRange(NSNotFound, 0);
 	_selectedRange = NSMakeRange(0, 0);
 }
-- (NSArray<NSAttributedStringKey> *)validAttributesForMarkedText
-{
+
+- (NSArray<NSAttributedStringKey>*)validAttributesForMarkedText {
 	LOG(@"validAttributesForMarkedText");
 	return @[];
 }
-- (NSAttributedString *)attributedSubstringForProposedRange:(NSRange)r
+
+- (NSAttributedString*)attributedSubstringForProposedRange:(NSRange)r
 	actualRange:(NSRangePointer)actualRange
 {
 	NSRange sr;
@@ -757,15 +874,15 @@ int stage = 0;
 	if(actualRange)
 		*actualRange = sr;
 	LOG(@"use range: %ld, %ld", sr.location, sr.length);
+	s = nil;
 	if(sr.length)
 		s = [[NSAttributedString alloc]
 			initWithString:[_tmpText substringWithRange:sr]];
 	LOG(@"	return %@", s);
 	return s;
 }
-- (void)insertText:(id)s
-	replacementRange:(NSRange)r
-{
+
+- (void)insertText:(id)s replacementRange:(NSRange)r {
 	NSUInteger i;
 	NSUInteger len;
 
@@ -775,27 +892,27 @@ int stage = 0;
 
 	len = [s length];
 	for(i = 0; i < len; ++i)
-		keystroke([s characterAtIndex:i]);
+		gfx_keystroke(self.client, [s characterAtIndex:i]);
 	[_tmpText deleteCharactersInRange:NSMakeRange(0, _tmpText.length)];
 	_markedRange = NSMakeRange(NSNotFound, 0);
 	_selectedRange = NSMakeRange(0, 0);
 }
+
 - (NSUInteger)characterIndexForPoint:(NSPoint)point
 {
 	LOG(@"characterIndexForPoint: %g, %g", point.x, point.y);
 	return 0;
 }
-- (NSRect)firstRectForCharacterRange:(NSRange)r
-	actualRange:(NSRangePointer)actualRange
-{
+
+- (NSRect)firstRectForCharacterRange:(NSRange)r actualRange:(NSRangePointer)actualRange {
 	LOG(@"firstRectForCharacterRange: (%ld, %ld) (%ld, %ld)",
 		r.location, r.length, actualRange->location, actualRange->length);
 	if(actualRange)
 		*actualRange = r;
 	return [[self window] convertRectToScreen:_lastInputRect];
 }
-- (void)doCommandBySelector:(SEL)s
-{
+
+- (void)doCommandBySelector:(SEL)s {
 	NSEvent *e;
 	NSEventModifierFlags m;
 	uint c, k;
@@ -815,12 +932,11 @@ int stage = 0;
 			k += Kcmd;
 	}
 	if(k>0)
-		keystroke(k);
+		gfx_keystroke(self.client, k);
 }
 
 // Helper for managing input rect approximately
-- (void)resetLastInputRect
-{
+- (void)resetLastInputRect {
 	LOG(@"resetLastInputRect");
 	_lastInputRect.origin.x = 0.0;
 	_lastInputRect.origin.y = 0.0;
@@ -828,8 +944,7 @@ int stage = 0;
 	_lastInputRect.size.height = 0.0;
 }
 
-- (void)enlargeLastInputRect:(NSRect)r
-{
+- (void)enlargeLastInputRect:(NSRect)r {
 	r.origin.y = [self bounds].size.height - r.origin.y - r.size.height;
 	_lastInputRect = NSUnionRect(_lastInputRect, r);
 	LOG(@"update last input rect (%g, %g, %g, %g)",
@@ -837,8 +952,7 @@ int stage = 0;
 		_lastInputRect.size.width, _lastInputRect.size.height);
 }
 
-- (void)clearInput
-{
+- (void)clearInput {
 	if(_tmpText.length){
 		uint i;
 		int l;
@@ -846,68 +960,13 @@ int stage = 0;
 			+ (_selectedRange.length > 0);
 		LOG(@"move right %d", l);
 		for(i = 0; i < l; ++i)
-			keystroke(Kright);
+			gfx_keystroke(self.client, Kright);
 		l = _tmpText.length+2+2*(_selectedRange.length > 0);
 		LOG(@"backspace %d", l);
 		for(uint i = 0; i < l; ++i)
-			keystroke(Kbs);
+			gfx_keystroke(self.client, Kbs);
 	}
 }
-
-@end
-
-@implementation DrawLayer
-
-- (void)display
-{
-	id<MTLCommandBuffer> cbuf;
-	id<MTLBlitCommandEncoder> blit;
-
-	LOG(@"display");
-
-	cbuf = [commandQueue commandBuffer];
-
-	LOG(@"display query drawable");
-
-@autoreleasepool{
-	id<CAMetalDrawable> drawable;
-
-	drawable = [layer nextDrawable];
-	if(!drawable){
-		LOG(@"display couldn't get drawable");
-		[self setNeedsDisplay];
-		return;
-	}
-
-	LOG(@"display got drawable");
-
-	blit = [cbuf blitCommandEncoder];
-	[blit copyFromTexture:texture
-		sourceSlice:0
-		sourceLevel:0
-		sourceOrigin:MTLOriginMake(0, 0, 0)
-		sourceSize:MTLSizeMake(texture.width, texture.height, texture.depth)
-		toTexture:drawable.texture
-		destinationSlice:0
-		destinationLevel:0
-		destinationOrigin:MTLOriginMake(0, 0, 0)];
-	[blit endEncoding];
-
-	[cbuf presentDrawable:drawable];
-	drawable = nil;
-}
-	[cbuf addCompletedHandler:^(id<MTLCommandBuffer> cmdBuff){
-		if(cmdBuff.error){
-			NSLog(@"command buffer finished with error: %@",
-				cmdBuff.error.localizedDescription);
-		}else
-			LOG(@"command buffer finishes present drawable");
-	}];
-	[cbuf commit];
-
-	LOG(@"display commit");
-}
-
 @end
 
 static uint
@@ -998,221 +1057,62 @@ keycvt(uint code)
 	}
 }
 
-Memimage*
-attachscreen(char *label, char *winsize)
-{
-	LOG(@"attachscreen(%s, %s)", label, winsize);
-	[AppDelegate
-		performSelectorOnMainThread:@selector(makewin:)
-		withObject:[NSValue valueWithPointer:winsize]
-		waitUntilDone:YES];
-	kicklabel(label);
-	setcursor(nil, nil);
-	mouseresized = 0;
-	return initimg();
-}
-
-static Memimage*
-initimg(void)
-{
-@autoreleasepool{
-	CGFloat scale;
-	NSSize size;
-	MTLTextureDescriptor *textureDesc;
-
-	size = [myContent convertSizeToBacking:[myContent bounds].size];
-	mouserect = Rect(0, 0, size.width, size.height);
-
-	LOG(@"initimg %.0f %.0f", size.width, size.height);
-
-	img = allocmemimage(mouserect, XRGB32);
-	if(img == nil)
-		panic("allocmemimage: %r");
-	if(img->data == nil)
-		panic("img->data == nil");
-
-	textureDesc = [MTLTextureDescriptor
-		texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-		width:size.width
-		height:size.height
-		mipmapped:NO];
-	textureDesc.allowGPUOptimizedContents = YES;
-	textureDesc.usage = MTLTextureUsageShaderRead;
-	textureDesc.cpuCacheMode = MTLCPUCacheModeWriteCombined;
-	texture = [device newTextureWithDescriptor:textureDesc];
-
-	scale = [win backingScaleFactor];
-	[layer setDrawableSize:size];
-	[layer setContentsScale:scale];
-
-	// NOTE: This is not really the display DPI.
-	// On retina, scale is 2; otherwise it is 1.
-	// This formula gives us 220 for retina, 110 otherwise.
-	// That's not quite right but it's close to correct.
-	// https://en.wikipedia.org/wiki/Retina_display#Models
-	displaydpi = scale * 110;
-}
-	LOG(@"initimg return");
-
-	return img;
-}
-
-void
-_flushmemscreen(Rectangle r)
-{
-	LOG(@"_flushmemscreen(%d,%d,%d,%d)", r.min.x, r.min.y, Dx(r), Dy(r));
-	if(!rectinrect(r, Rect(0, 0, texture.width, texture.height))){
-		LOG(@"Rectangle is out of bounds, return.");
-		return;
-	}
-
-	@autoreleasepool{
-		[texture
-			replaceRegion:MTLRegionMake2D(r.min.x, r.min.y, Dx(r), Dy(r))
-			mipmapLevel:0
-			withBytes:byteaddr(img, Pt(r.min.x, r.min.y))
-			bytesPerRow:img->width*sizeof(u32int)];
-		[AppDelegate
-			performSelectorOnMainThread:@selector(callsetNeedsDisplayInRect:)
-			withObject:[NSValue valueWithRect:NSMakeRect(r.min.x, r.min.y, Dx(r), Dy(r))]
-			waitUntilDone:NO];
-	}
-}
-
-void
-setmouse(Point p)
-{
-	@autoreleasepool{
-		NSPoint q;
-
-		LOG(@"setmouse(%d,%d)", p.x, p.y);
-		q = [win convertPointFromBacking:NSMakePoint(p.x, p.y)];
-		LOG(@"(%g, %g) <- fromBacking", q.x, q.y);
-		q = [myContent convertPoint:q toView:nil];
-		LOG(@"(%g, %g) <- toWindow", q.x, q.y);
-		q = [win convertPointToScreen:q];
-		LOG(@"(%g, %g) <- toScreen", q.x, q.y);
-		// Quartz has the origin of the "global display
-		// coordinate space" at the top left of the primary
-		// screen with y increasing downward, while Cocoa has
-		// the origin at the bottom left of the primary screen
-		// with y increasing upward.  We flip the coordinate
-		// with a negative sign and shift upward by the height
-		// of the primary screen.
-		q.y = NSScreen.screens[0].frame.size.height - q.y;
-		LOG(@"(%g, %g) <- setmouse", q.x, q.y);
-		CGWarpMouseCursorPosition(NSPointToCGPoint(q));
-		CGAssociateMouseAndMouseCursorPosition(true);
-	}
-}
-
+// rpc_getsnarf reads the current pasteboard as a plain text string.
+// Called from an RPC thread with no client lock held.
 char*
-getsnarf(void)
+rpc_getsnarf(void)
 {
-	NSPasteboard *pb;
-	NSString *s;
+	char __block *ret;
 
-	@autoreleasepool{
-		pb = [NSPasteboard generalPasteboard];
-
-		qlock(&snarfl);
-		s = [pb stringForType:NSPasteboardTypeString];
-		qunlock(&snarfl);
-
-		if(s)
-			return strdup((char *)[s UTF8String]);
-		else
-			return nil;
-	}
-}
-
-void
-putsnarf(char *s)
-{
-	NSArray *t;
-	NSPasteboard *pb;
-	NSString *str;
-
-	if(strlen(s) >= SnarfSize)
-		return;
-
-	@autoreleasepool{
-		t = [NSArray arrayWithObject:NSPasteboardTypeString];
-		pb = [NSPasteboard generalPasteboard];
-		str = [[NSString alloc] initWithUTF8String:s];
-
-		qlock(&snarfl);
-		[pb declareTypes:t owner:nil];
-		[pb setString:str forType:NSPasteboardTypeString];
-		qunlock(&snarfl);
-	}
-}
-
-void
-kicklabel(char *label)
-{
-	NSString *s;
-
-	LOG(@"kicklabel(%s)", label);
-	if(label == nil)
-		return;
-
-	@autoreleasepool{
-		s = [[NSString alloc] initWithUTF8String:label];
-		[AppDelegate
-			performSelectorOnMainThread:@selector(callkicklabel:)
-			withObject:s
-			waitUntilDone:NO];
-	}
-}
-
-void
-setcursor(Cursor *c, Cursor2 *c2)
-{
-	Cursors cs;
-
-	cs.c = c;
-	cs.c2 = c2;
-
-	[AppDelegate
-		performSelectorOnMainThread:@selector(callsetcursor:)
-		withObject:[NSValue valueWithPointer:&cs]
-		waitUntilDone:YES];
-}
-
-void
-topwin(void)
-{
-	[win
-		performSelectorOnMainThread:
-		@selector(makeKeyAndOrderFront:)
-		withObject:nil
-		waitUntilDone:YES];
-
-	[NSApp activateIgnoringOtherApps:YES];
-}
-
-void
-resizeimg(void)
-{
-	zlock();
-	_drawreplacescreenimage(initimg());
-
-	mouseresized = 1;
-	zunlock();
-	[myContent sendmouse:0];
-}
-
-void
-resizewindow(Rectangle r)
-{
-	LOG(@"resizewindow %d %d %d %d", r.min.x, r.min.y, Dx(r), Dy(r));
-	dispatch_async(dispatch_get_main_queue(), ^(void){
-		NSSize s;
-
-		s = [myContent convertSizeFromBacking:NSMakeSize(Dx(r), Dy(r))];
-		[win setContentSize:s];
+	ret = nil;
+	dispatch_sync(dispatch_get_main_queue(), ^(void) {
+		@autoreleasepool {
+			NSPasteboard *pb = [NSPasteboard generalPasteboard];
+			NSString *s = [pb stringForType:NSPasteboardTypeString];
+			if(s)
+				ret = strdup((char*)[s UTF8String]);
+		}
 	});
+	return ret;
+}
+
+// rpc_putsnarf writes the given text to the pasteboard.
+// Called from an RPC thread with no client lock held.
+void
+rpc_putsnarf(char *s)
+{
+	if(s == nil || strlen(s) >= SnarfSize)
+		return;
+
+	dispatch_sync(dispatch_get_main_queue(), ^(void) {
+		@autoreleasepool{
+			NSArray *t = [NSArray arrayWithObject:NSPasteboardTypeString];
+			NSPasteboard *pb = [NSPasteboard generalPasteboard];
+			NSString *str = [[NSString alloc] initWithUTF8String:s];
+			[pb declareTypes:t owner:nil];
+			[pb setString:str forType:NSPasteboardTypeString];
+		}
+	});
+}
+
+// rpc_bouncemouse is for sending a mouse event
+// back to the X11 window manager rio(1).
+// Does not apply here.
+void
+rpc_bouncemouse(Client *c, Mouse m)
+{
+}
+
+// We don't use the graphics thread state during memimagedraw,
+// so rpc_gfxdrawlock and rpc_gfxdrawunlock are no-ops.
+void
+rpc_gfxdrawlock(void)
+{
+}
+
+void
+rpc_gfxdrawunlock(void)
+{
 }
 
 static void

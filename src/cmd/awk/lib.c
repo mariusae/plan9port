@@ -430,7 +430,7 @@ int refldbld(char *rec, char *fs)	/* build fields from reg expr in FS */
 			break;
 		}
 	}
-	return i;		
+	return i;
 }
 
 void recbld(void)	/* create $0 from $1..$NF if necessary */
@@ -710,4 +710,3 @@ int is_number(char *s)
 	else
 		return 0;
 }
-

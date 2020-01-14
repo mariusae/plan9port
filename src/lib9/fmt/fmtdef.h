@@ -33,11 +33,13 @@ int          __fmtFdFlush(Fmt *f);
 int          __fmtcpy(Fmt *f, const void *vm, int n, int sz);
 void*        __fmtdispatch(Fmt *f, void *fmt, int isrunes);
 void *       __fmtflush(Fmt *f, void *t, int len);
-void         __fmtlock(void);
 int          __fmtpad(Fmt *f, int n);
 double       __fmtpow10(int n);
 int          __fmtrcpy(Fmt *f, const void *vm, int n);
-void         __fmtunlock(void);
+void         __fmtrlock(void);
+void         __fmtrunlock(void);
+void         __fmtwlock(void);
+void         __fmtwunlock(void);
 int          __ifmt(Fmt *f);
 int          __isInf(double d, int sign);
 int          __isNaN(double d);
@@ -102,4 +104,3 @@ int          __strfmt(Fmt *f);
 #	define VA_COPY(a,b) (a) = (b)
 #	define VA_END(a)
 #endif
-

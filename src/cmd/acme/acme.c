@@ -1216,4 +1216,3 @@ timefmt(Fmt *f)
 	return fmtprint(f, "%04d/%02d/%02d %02d:%02d:%02d",
 		tm->year+1900, tm->mon+1, tm->mday, tm->hour, tm->min, tm->sec);
 }
-
