@@ -48,6 +48,7 @@ sizeW2M(Wsysmsg *m)
 	case Rbouncemouse:
 	case Rmoveto:
 	case Rcursor:
+	case Rcursor2:
 	case Trdkbd:
 	case Rlabel:
 	case Rctxt:
@@ -59,12 +60,14 @@ sizeW2M(Wsysmsg *m)
 	case Rresize:
 		return 4+1+1;
 	case Rrdmouse:
-		return 4+1+1+4+4+4+4+4+1;
+		return 4+1+1+4+4+4+4+1;
 	case Tbouncemouse:
 		return 4+1+1+4+4+4;
 	case Tmoveto:
 		return 4+1+1+4+4;
 	case Tcursor:
+		return 4+1+1+4+4+2*16+2*16+1;
+	case Tcursor2:
 		return 4+1+1+4+4+2*16+2*16+4+4+4*32+4*32+1;
 	case Rerror:
 		return 4+1+1+_stringsize(m->error);
@@ -112,6 +115,7 @@ convW2M(Wsysmsg *m, uchar *p, uint n)
 	case Rbouncemouse:
 	case Rmoveto:
 	case Rcursor:
+	case Rcursor2:
 	case Trdkbd:
 	case Rlabel:
 	case Rctxt:
@@ -129,9 +133,8 @@ convW2M(Wsysmsg *m, uchar *p, uint n)
 		PUT(p+6, m->mouse.xy.x);
 		PUT(p+10, m->mouse.xy.y);
 		PUT(p+14, m->mouse.buttons);
-		PUT(p+18, m->mouse.scroll);
-		PUT(p+22, m->mouse.msec);
-		p[23] = m->resized;
+		PUT(p+18, m->mouse.msec);
+		p[19] = m->resized;
 		break;
 	case Tbouncemouse:
 		PUT(p+6, m->mouse.xy.x);
@@ -216,6 +219,7 @@ convM2W(uchar *p, uint n, Wsysmsg *m)
 	case Rbouncemouse:
 	case Rmoveto:
 	case Rcursor:
+	case Rcursor2:
 	case Trdkbd:
 	case Rlabel:
 	case Rctxt:
@@ -233,9 +237,8 @@ convM2W(uchar *p, uint n, Wsysmsg *m)
 		GET(p+6, m->mouse.xy.x);
 		GET(p+10, m->mouse.xy.y);
 		GET(p+14, m->mouse.buttons);
-		GET(p+18, m->mouse.scroll);
-		GET(p+22, m->mouse.msec);
-		m->resized = p[23];
+		GET(p+18, m->mouse.msec);
+		m->resized = p[19];
 		break;
 	case Tbouncemouse:
 		GET(p+6, m->mouse.xy.x);
@@ -335,8 +338,7 @@ drawfcallfmt(Fmt *fmt)
 	case Rrdmouse:
 		return fmtprint(fmt, "Rrdmouse x=%d y=%d buttons=%d msec=%d resized=%d",
 			m->mouse.xy.x, m->mouse.xy.y,
-			m->mouse.buttons, m->mouse.scroll, 
-			m->mouse.msec, m->resized);
+			m->mouse.buttons, m->mouse.msec, m->resized);
 	case Tbouncemouse:
 		return fmtprint(fmt, "Tbouncemouse x=%d y=%d buttons=%d",
 			m->mouse.xy.x, m->mouse.xy.y, m->mouse.buttons);
@@ -348,8 +350,12 @@ drawfcallfmt(Fmt *fmt)
 		return fmtprint(fmt, "Rmoveto");
 	case Tcursor:
 		return fmtprint(fmt, "Tcursor arrow=%d", m->arrowcursor);
+	case Tcursor2:
+		return fmtprint(fmt, "Tcursor2 arrow=%d", m->arrowcursor);
 	case Rcursor:
 		return fmtprint(fmt, "Rcursor");
+	case Rcursor2:
+		return fmtprint(fmt, "Rcursor2");
 	case Trdkbd:
 		return fmtprint(fmt, "Trdkbd");
 	case Rrdkbd:
