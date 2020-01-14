@@ -536,7 +536,6 @@ rpc_resizeimg(Client *c)
 
 	}
 }
-@end
 
 - (void)viewDidEndLiveResize
 {
@@ -590,13 +589,9 @@ rpc_resizewindow(Client *c, Rectangle r)
 
 	s = [e scrollingDeltaY];
 	if(s > 0)
-		b = 8;
-	else if(s < 0)
-		b = 16;
-	else
-		return;
-
-	[self scrollmouse:b by:s];
+		[self sendmouse:8];
+	else if (s < 0)
+		[self sendmouse:16];
 }
 
 - (void)keyDown:(NSEvent*)e
