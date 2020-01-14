@@ -185,7 +185,7 @@ struct DScreen
 void	gfx_abortcompose(Client*);
 void	gfx_keystroke(Client*, int);
 void	gfx_main(void);
-void	gfx_mousetrack(Client*, int, int, int, uint);
+void	gfx_mousetrack(Client*, int, int, int, int, uint);
 void	gfx_replacescreenimage(Client*, Memimage*);
 void	gfx_started(void);
 

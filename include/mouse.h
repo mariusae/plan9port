@@ -1,7 +1,7 @@
 #ifndef _MOUSE_H_
 #define _MOUSE_H_ 1
 #if defined(__cplusplus)
-extern "C" { 
+extern "C" {
 #endif
 typedef struct	Menu Menu;
 typedef struct 	Mousectl Mousectl;
