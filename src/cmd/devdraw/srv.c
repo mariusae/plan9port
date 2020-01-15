@@ -397,7 +397,7 @@ matchmouse(Client *c)
 void
 gfx_mouseresized(Client *c)
 {
-	gfx_mousetrack(c, -1, -1, -1, -1);
+	gfx_mousetrack(c, -1, -1, -1, 0, -1);
 }
 
 void
