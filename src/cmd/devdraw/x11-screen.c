@@ -550,8 +550,6 @@ xattach(Client *client, char *label, char *winsize)
 		havemin = 0;
 	}
 	w = newxwin(client);
-	w->screenrect = Rect(0, 0, WidthOfScreen(xscreen), HeightOfScreen(xscreen));
-	w->windowrect = r;
 
 	memset(&attr, 0, sizeof attr);
 	attr.colormap = _x.cmap;
@@ -679,6 +677,8 @@ xattach(Client *client, char *label, char *winsize)
 		}
 	}else
 		fprint(2, "XGetWindowAttributes: bad attrs\n");
+	w->screenrect = Rect(0, 0, WidthOfScreen(xscreen), HeightOfScreen(xscreen));
+	w->windowrect = r;
 
 	/*
 	 * Allocate our local backing store.
@@ -1042,7 +1042,9 @@ _xreplacescreenimage(Client *client)
 	w->nextscreenpm = pixmap;
 	w->screenr = r;
 	client->mouserect = r;
+	xunlock();
 	gfx_replacescreenimage(client, m);
+	xlock();
 	return 1;
 }
 
