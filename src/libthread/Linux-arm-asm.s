@@ -1,16 +1,5 @@
- 
-.globl _tas
-_tas:
-	mov	r3, #0xCA000000
-	add	r3, r3, #0xFE0000
-	add	r3, r3, #0xBA00
-	add	r3, r3, #0xBE
-	swp	r3, r3, [r0]
-	mov	r0, r3
-	mov	pc, lr
-
-.globl getmcontext
-getmcontext:
+.globl mygetmcontext
+mygetmcontext:
 	str	r1, [r0,#4]
 	str	r2, [r0,#8]
 	str	r3, [r0,#12]
@@ -32,8 +21,8 @@ getmcontext:
 	mov	r0, #0
 	mov	pc, lr
 
-.globl setmcontext
-setmcontext:
+.globl mysetmcontext
+mysetmcontext:
 	ldr	r1, [r0,#4]
 	ldr	r2, [r0,#8]
 	ldr	r3, [r0,#12]
@@ -50,4 +39,3 @@ setmcontext:
 	ldr	r14, [r0,#56]
 	ldr	r0, [r0]
 	mov	pc, lr
-

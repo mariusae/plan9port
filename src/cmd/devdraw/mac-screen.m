@@ -510,7 +510,7 @@ void
 rpc_resizeimg(Client *c)
 {
 	DrawView *view = (__bridge DrawView*)c->view;
-	dispatch_sync(dispatch_get_main_queue(), ^(void){
+	dispatch_async(dispatch_get_main_queue(), ^(void){
 		[view resizeimg];
 	});
 }
@@ -560,6 +560,10 @@ rpc_resizewindow(Client *c, Rectangle r)
 
 - (void)windowDidBecomeKey:(id)arg {
         [self sendmouse:0];
+}
+
+- (void)windowDidResignKey:(id)arg {
+	gfx_abortcompose(self.client);
 }
 
 - (void)mouseMoved:(NSEvent*)e{ [self getmouse:e];}

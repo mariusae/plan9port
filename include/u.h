@@ -6,6 +6,8 @@
 extern "C" {
 #endif
 
+#define HAS_SYS_TERMIOS 1
+
 #define __BSD_VISIBLE 1 /* FreeBSD 5.x */
 #if defined(__sun__)
 #	define __EXTENSIONS__ 1 /* SunOS */
@@ -20,7 +22,7 @@ extern "C" {
 #define _NETBSD_SOURCE 1	/* NetBSD */
 #define _SVID_SOURCE 1
 #define _DEFAULT_SOURCE 1
-#if !defined(__APPLE__) && !defined(__OpenBSD__)
+#if !defined(__APPLE__) && !defined(__OpenBSD__) && !defined(__AIX__)
 #	define _XOPEN_SOURCE 1000
 #	define _XOPEN_SOURCE_EXTENDED 1
 #endif
@@ -33,7 +35,9 @@ extern "C" {
 #	define __LONG_LONG_SUPPORTED
 #endif
 #if defined(__AIX__)
-#	define _XOPEN_SOURCE 1
+#	define _XOPEN_SOURCE 600
+#	define _ALL_SOURCE
+#	undef HAS_SYS_TERMIOS
 #endif
 #if defined(__APPLE__)
 #	define _DARWIN_NO_64_BIT_INODE	/* Snow Leopard */
@@ -66,10 +70,8 @@ typedef long p9jmp_buf[sizeof(sigjmp_buf)/sizeof(long)];
 
 #if defined(__linux__)
 #	include <sys/types.h>
-#	if defined(__Linux26__)
-#		include <pthread.h>
-#		define PLAN9PORT_USING_PTHREADS 1
-#	endif
+#	include <pthread.h>
+#	define PLAN9PORT_USING_PTHREADS 1
 #	if defined(__USE_MISC)
 #		undef _NEEDUSHORT
 #		undef _NEEDUINT
@@ -86,10 +88,8 @@ typedef long p9jmp_buf[sizeof(sigjmp_buf)/sizeof(long)];
 #elif defined(__FreeBSD__)
 #	include <sys/types.h>
 #	include <osreldate.h>
-#	if __FreeBSD_version >= 500000
-#		define PLAN9PORT_USING_PTHREADS 1
-#		include <pthread.h>
-#	endif
+#	define PLAN9PORT_USING_PTHREADS 1
+#	include <pthread.h>
 #	if !defined(_POSIX_SOURCE)
 #		undef _NEEDUSHORT
 #		undef _NEEDUINT
