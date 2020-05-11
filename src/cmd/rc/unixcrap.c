@@ -58,8 +58,7 @@ eusage(void)
 void
 execulimit(void)
 {
-	rlim_t n;
-	int fd, argc, sethard, setsoft, limit;
+	int fd, n, argc, sethard, setsoft, limit;
 	int flag[256];
 	char **argv, **oargv, *p;
 	char *argv0;
@@ -119,10 +118,10 @@ execulimit(void)
 		for(p=eargs; *p; p++){
 			getrlimit(rlx[p-eargs], &rl);
 			n = flag['H'] ? rl.rlim_max : rl.rlim_cur;
-			if(n == RLIM_INFINITY)
+			if(n == -1)
 				fprint(fd, "ulimit -%c unlimited\n", *p);
 			else
-				fprint(fd, "ulimit -%c %llud\n", *p, (uvlong)n);
+				fprint(fd, "ulimit -%c %d\n", *p, n);
 		}
 		goto out;
 	}
@@ -133,10 +132,10 @@ execulimit(void)
 			switch(limit){
 			case Notset:
 				n = flag['H'] ? rl.rlim_max : rl.rlim_cur;
-				if(n == RLIM_INFINITY)
+				if(n == -1)
 					fprint(fd, "ulimit -%c unlimited\n", *p);
 				else
-					fprint(fd, "ulimit -%c %llud\n", *p, (uvlong)n);
+					fprint(fd, "ulimit -%c %d\n", *p, n);
 				break;
 			case Hard:
 				n = rl.rlim_max;
@@ -145,7 +144,7 @@ execulimit(void)
 				n = rl.rlim_cur;
 				goto set;
 			case Unlimited:
-				n = RLIM_INFINITY;
+				n = -1;
 				goto set;
 			default:
 				n = limit;

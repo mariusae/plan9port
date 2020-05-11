@@ -12,25 +12,12 @@
 %{
 #include "rc.h"
 #include "fns.h"
-
-tree*
-treeeq(int type, tree *c0, tree *c1)
-{
-	char *old;
-
-	old = c0->str;
-	c0->str = smprint("%s=", c0->str);
-	c0->quoted = 1;
-	free(old);
-	return tree2(type, c0, c1);
-}
-
 %}
 %union{
 	struct tree *tree;
 };
 %type<tree> line paren brace body cmdsa cmdsan assign epilog redir
-%type<tree> cmd simple first word comword keyword words nexteq
+%type<tree> cmd simple first word comword keyword words
 %type<tree> NOT FOR IN WHILE IF TWIDDLE BANG SUBSHELL SWITCH FN
 %type<tree> WORD REDIR DUP PIPE
 %%
@@ -84,7 +71,6 @@ cmd:				{$$=0;}
 |	FN words brace		{$$=tree2(FN, $2, $3);}
 |	FN words		{$$=tree1(FN, $2);}
 simple:	first
-|	simple nexteq		{$$=tree2(ARGLIST, $1, $2);}
 |	simple word		{$$=tree2(ARGLIST, $1, $2);}
 |	simple redir		{$$=tree2(ARGLIST, $1, $2);}
 first:	comword	
@@ -103,4 +89,3 @@ comword: '$' word		{$$=tree1('$', $2);}
 keyword: FOR|IN|WHILE|IF|NOT|TWIDDLE|BANG|SUBSHELL|SWITCH|FN
 words:				{$$=(struct tree*)0;}
 |	words word		{$$=tree2(WORDS, $1, $2);}
-nexteq:	word '=' word		{$$=treeeq('^', $1, $3);}
