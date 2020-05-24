@@ -385,7 +385,7 @@ extern	int	exitcode(char*);
 extern	void	exits(char*);
 extern	double	p9frexp(double, int*);
 extern	ulong	getcallerpc(void*);
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__) || defined(__IBMC__)
 #define getcallerpc(x) ((ulong)__builtin_return_address(0))
 #endif
 extern	char*	p9getenv(char*);
@@ -747,7 +747,7 @@ extern	int	awaitnohang(char*, int);
 /* extern	int	bind(char*, char*, int); give up */
 /* extern	int	brk(void*); <unistd.h> */
 extern	int	p9chdir(char*);
-extern	int	close(int);
+extern	int	p9close(int);
 extern	int	p9create(char*, int, ulong);
 extern	int	p9dup(int, int);
 extern	int	errstr(char*, uint);
@@ -822,6 +822,8 @@ extern	ulong	rendezvous(ulong, ulong);
 #define create		p9create
 #undef open
 #define open		p9open
+#undef close
+#define close		p9close
 #define pipe		p9pipe
 #define	waitfor		p9waitfor
 #define write		p9write
