@@ -220,6 +220,7 @@ void		textreset(Text*);
 int		textresize(Text*, Rectangle, int);
 void		textscrdraw(Text*);
 void		textscroll(Text*, int);
+void		xtextscroll(Text*, int);
 void		textselect(Text*);
 int		textselect2(Text*, uint*, uint*, Text**);
 int		textselect23(Text*, uint*, uint*, Image*, int);

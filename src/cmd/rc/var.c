@@ -96,12 +96,18 @@ setvar(char *name, word *val)
 void
 bigpath(var *v)
 {
-	/* convert $PATH to $path */
+	/* convert ${CD,}PATH to ${cd,}path */
 	char *p, *q;
 	word **l, *w;
+	char *littlename;
+
+	if(strcmp(v->name, "PATH") == 0)
+		littlename = "path";
+	if(strcmp(v->name, "CDPATH") == 0)
+		littlename = "cdpath";
 
 	if(v->val == nil){
-		_setvar("path", nil, 0);
+		_setvar(littlename, nil, 0);
 		return;
 	}
 	p = v->val->word;
@@ -124,7 +130,7 @@ bigpath(var *v)
 		}else
 			p = nil;
 	}
-	_setvar("path", w, 0);
+	_setvar(littlename, w, 0);
 }
 
 char*
@@ -149,15 +155,20 @@ list2strcolon(word *words)
 void
 littlepath(var *v)
 {
-	/* convert $path to $PATH */
+	/* convert ${cd,}path to ${CD,}PATH */
 	char *p;
 	word *w;
+
 
 	p = list2strcolon(v->val);
 	w = new(word);
 	w->word = p;
 	w->next = nil;
-	_setvar("PATH", w, 1);	/* 1: recompute $path to expose colon problems */
+	/* 1: recompute $path to expose colon problems */
+	if(strcmp(v->name, "path") == 0)
+		_setvar("PATH", w, 1);
+	if(strcmp(v->name, "cdpath") == 0)
+		_setvar("CDPATH", w, 1);
 }
 
 void
@@ -168,6 +179,12 @@ pathinit(void)
 	v = gvlook("path");
 	v->changefn = littlepath;
 	v = gvlook("PATH");
+	v->changefn = bigpath;
+	bigpath(v);
+
+	v = gvlook("cdpath");
+	v->changefn = littlepath;
+	v = gvlook("CDPATH");
 	v->changefn = bigpath;
 	bigpath(v);
 }
