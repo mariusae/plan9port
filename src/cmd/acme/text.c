@@ -9,6 +9,7 @@
 #include <fcall.h>
 #include <plumb.h>
 #include <libsec.h>
+#include <9pclient.h>
 #include <complete.h>
 #include "dat.h"
 #include "fns.h"
@@ -194,12 +195,13 @@ textload(Text *t, uint q0, char *file, int setqid)
 {
 	Rune *rp;
 	Dirlist *dl, **dlp;
-	int fd, i, j, n, ndl, nulls;
+	int i, j, n, ndl, nulls;
 	uint q, q1;
 	Dir *d, *dbuf;
 	char *tmp;
 	Text *u;
 	DigestState *h;
+	Vfd fd;
 
 	if(t->ncache!=0 || t->file->b.nc || t->w==nil || t!=&t->w->body)
 		error("text.load");
@@ -211,12 +213,14 @@ textload(Text *t, uint q0, char *file, int setqid)
 		warning(nil, "will not open self mount point %s\n", file);
 		return -1;
 	}
-	fd = open(file, OREAD);
-	if(fd < 0){
+
+
+	fd = vopen(file, OREAD);
+	if(fd.which == Verr){
 		warning(nil, "can't open %s: %r\n", file);
 		return -1;
 	}
-	d = dirfstat(fd);
+	d = vdirfstat(fd);
 	if(d == nil){
 		warning(nil, "can't fstat %s: %r\n", file);
 		goto Rescue;
@@ -241,7 +245,7 @@ textload(Text *t, uint q0, char *file, int setqid)
 		dlp = nil;
 		ndl = 0;
 		dbuf = nil;
-		while((n=dirread(fd, &dbuf)) > 0){
+		while((n=vdirread(fd, &dbuf)) > 0){
 			for(i=0; i<n; i++){
 				dl = emalloc(sizeof(Dirlist));
 				j = strlen(dbuf[i].name);
@@ -282,7 +286,7 @@ textload(Text *t, uint q0, char *file, int setqid)
 		t->file->mtime = d->mtime;
 		t->file->qidpath = d->qid.path;
 	}
-	close(fd);
+	vclose(&fd);
 	rp = fbufalloc();
 	for(q=q0; q<q1; q+=n){
 		n = q1-q;
@@ -313,7 +317,7 @@ textload(Text *t, uint q0, char *file, int setqid)
 	return q1-q0;
 
     Rescue:
-	close(fd);
+	vclose(&fd);
 	return -1;
 }
 
@@ -635,7 +639,7 @@ textcomplete(Text *t)
 
 	s = smprint("%.*S", nstr, str);
 	dirs = smprint("%.*S", dir.nr, dir.r);
-	c = complete(dirs, s);
+	c = vcomplete(dirs, s);
 	free(s);
 	if(c == nil){
 		warning(nil, "error attempting completion: %r\n");
@@ -668,7 +672,7 @@ void
 xtextscroll(Text *t, int n)
 {
 	uint q0;
-	
+
 	if(n == 0)
 		return;
 
@@ -679,7 +683,7 @@ xtextscroll(Text *t, int n)
 			texttype(t, Kscrollonedown);
 		return;
 	}
-	
+
 	if(n < 0){
 		n = -n;
 		q0 = t->org+frcharofpt(&t->fr, Pt(t->fr.r.min.x, t->fr.r.min.y+n*t->fr.font->height));

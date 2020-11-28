@@ -9,6 +9,7 @@
 #include <fcall.h>
 #include <plumb.h>
 #include <libsec.h>
+#include <9pclient.h>
 #include "dat.h"
 #include "fns.h"
 	/* for generating syms in mkfile only: */
@@ -49,6 +50,7 @@ void	shutdownthread(void*);
 void	acmeerrorinit(void);
 void	readfile(Column*, char*);
 static int	shutdown(void*, char*);
+void waitrelaythread(void*);
 
 char		*menu2str[] = {
 	"Ldef",
@@ -85,6 +87,7 @@ threadmain(int argc, char *argv[])
 	Column *c;
 	int ncol;
 	Display *d;
+	Remote *r;
 
 	rfork(RFENVG|RFNAMEG);
 
@@ -131,7 +134,7 @@ threadmain(int argc, char *argv[])
 		if(mtpt == nil)
 			goto Usage;
 		break;
-	case 'r':
+	case 'w':
 		swapscrollbuttons = TRUE;
 		break;
 	case 'W':
@@ -139,11 +142,42 @@ threadmain(int argc, char *argv[])
 		if(winsize == nil)
 			goto Usage;
 		break;
+	case 'r':
+		/* fix: this means that -s has to be given before -r */
+/*
+		rconnect(ARGF());
+*/
+		break;
+	case 's':
+		racmename = ARGF();
+		if(racmename == nil)
+			goto Usage;
+		break;
 	default:
 	Usage:
-		fprint(2, "usage: acme -a -c ncol -f fontname -F fixedwidthfontname -l loadfile -W winsize\n");
+		fprint(2, "usage: acme -a -c ncol -f fontname -F fixedwidthfontname -l loadfile -W winsize -r machine -s path\n");
 		threadexitsall("usage");
 	}ARGEND
+
+	/*
+		TODO: argparse. Note: need to cleanname.
+	*/
+	r = emalloc(sizeof *r);
+	r->prefix = emalloc(sizeof(char*)*3);
+	r->prefix[0] = "/tmp/test";
+	r->prefix[1] = "/tmp/test1";
+	r->prefix[2] = nil;
+	r->machine = "localhost";
+	remotes = r;
+	r = emalloc(sizeof *r);
+	r->prefix = emalloc(sizeof(char*)*4);
+	r->prefix[0] = "/home/meriksen";
+	r->prefix[1] =  "/data/users/meriksen";
+	r->prefix[2] = "/usr/local/fbcode";
+	r->prefix[2] = nil;
+	r->machine = "dev";
+	r->next = remotes;
+	remotes = r;
 
 	fontnames[0] = estrdup(fontnames[0]);
 	fontnames[1] = estrdup(fontnames[1]);
@@ -204,7 +238,7 @@ threadmain(int argc, char *argv[])
 	timerinit();
 	rxinit();
 
-	cwait = threadwaitchan();
+	cvwait = chancreate(sizeof(Vwaitmsg*), 0);
 	ccommand = chancreate(sizeof(Command**), 0);
 	ckill = chancreate(sizeof(Rune*), 0);
 	cxfidalloc = chancreate(sizeof(Xfid*), 0);
@@ -214,10 +248,11 @@ threadmain(int argc, char *argv[])
 	cedit = chancreate(sizeof(int), 0);
 	cexit = chancreate(sizeof(int), 0);
 	cwarn = chancreate(sizeof(void*), 1);
-	if(cwait==nil || ccommand==nil || ckill==nil || cxfidalloc==nil || cxfidfree==nil || cerr==nil || cexit==nil || cwarn==nil){
+	if(cvwait==nil || ccommand==nil || ckill==nil || cxfidalloc==nil || cxfidfree==nil || cerr==nil || cexit==nil || cwarn==nil){
 		fprint(2, "acme: can't create initial channels: %r\n");
 		threadexitsall("channels");
 	}
+	chansetname(cvwait, "cvwait");
 	chansetname(ccommand, "ccommand");
 	chansetname(ckill, "ckill");
 	chansetname(cxfidalloc, "cxfidalloc");
@@ -295,7 +330,9 @@ threadmain(int argc, char *argv[])
 	threadcreate(xfidallocthread, nil, STACK);
 	threadcreate(newwindowthread, nil, STACK);
 /*	threadcreate(shutdownthread, nil, STACK); */
+	threadcreate(waitrelaythread, nil, STACK);
 	threadnotify(shutdown, 1);
+/*	rconnect(remotes);*/
 	recvul(cexit);
 	killprocs();
 	threadexitsall(nil);
@@ -385,6 +422,25 @@ shutdownthread(void *v)
 */
 
 void
+waitrelaythread(void *v)
+{
+	Channel *c;
+	Waitmsg *w;
+	Vwaitmsg *vw;
+	USED(v);
+
+	c = threadwaitchan();
+	for(;;){
+		w = recvp(c);
+		vw = emalloc(sizeof *vw);
+		vw->vp.id = w->pid;
+		vw->msg = w->msg;
+		free(w);
+		sendp(cvwait, vw);
+	}
+}
+
+void
 killprocs(void)
 {
 	Command *c;
@@ -393,8 +449,9 @@ killprocs(void)
 /*	if(display) */
 /*		flushimage(display, 1); */
 
+	/* TODO: what about remote procs? */
 	for(c=command; c; c=c->next)
-		postnote(PNGROUP, c->pid, "hangup");
+		vpostnote(c->vp, "hangup");
 }
 
 static int errorfd;
@@ -413,7 +470,6 @@ acmeerrorproc(void *v)
 		buf[n] = '\0';
 		s = estrdup(buf);
 		sendp(cerr, s);
-		free(s);
 	}
 	free(buf);
 }
@@ -740,9 +796,9 @@ struct Pid
 void
 waitthread(void *v)
 {
-	Waitmsg *w;
+	Vwaitmsg *vw;
 	Command *c, *lc;
-	uint pid;
+	Vpid vp;
 	int found, ncmd;
 	Rune *cmd;
 	char *err;
@@ -760,8 +816,8 @@ waitthread(void *v)
 	alts[WKill].c = ckill;
 	alts[WKill].v = &cmd;
 	alts[WKill].op = CHANRCV;
-	alts[WWait].c = cwait;
-	alts[WWait].v = &w;
+	alts[WWait].c = cvwait;
+	alts[WWait].v = &vw;
 	alts[WWait].op = CHANRCV;
 	alts[WCmd].c = ccommand;
 	alts[WCmd].v = &c;
@@ -784,7 +840,7 @@ waitthread(void *v)
 			for(c=command; c; c=c->next){
 				/* -1 for blank */
 				if(runeeq(c->name, c->nname-1, cmd, ncmd) == TRUE){
-					if(postnote(PNGROUP, c->pid, "kill") < 0)
+					if(vpostnote(c->vp, "kill") < 0)
 						warning(nil, "kill %S: %r\n", cmd);
 					found = TRUE;
 				}
@@ -794,10 +850,10 @@ waitthread(void *v)
 			free(cmd);
 			break;
 		case WWait:
-			pid = w->pid;
+			vp = vw->vp;
 			lc = nil;
 			for(c=command; c; c=c->next){
-				if(c->pid == pid){
+				if(vpcmp(c->vp, vp)==0){
 					if(lc)
 						lc->next = c->next;
 					else
@@ -811,10 +867,10 @@ waitthread(void *v)
 			textcommit(t, TRUE);
 			if(c == nil){
 				/* helper processes use this exit status */
-				if(strncmp(w->msg, "libthread", 9) != 0){
+				if(vp.sess == nil && strncmp(vw->msg, "libthread", 9) != 0){
 					p = emalloc(sizeof(Pid));
-					p->pid = pid;
-					strncpy(p->msg, w->msg, sizeof(p->msg));
+					p->pid = vp.id;
+					strncpy(p->msg, vw->msg, sizeof(p->msg));
 					p->next = pids;
 					pids = p;
 				}
@@ -823,14 +879,16 @@ waitthread(void *v)
 					textdelete(t, t->q0, t->q1, TRUE);
 					textsetselect(t, 0, 0);
 				}
-				if(w->msg[0])
-					warning(c->md, "%.*S: exit %s\n", c->nname-1, c->name, w->msg);
+				if(vw->msg[0])
+					warning(c->md, "%.*S: exit %s\n", c->nname-1, c->name, vw->msg);
 				flushimage(display, 1);
 			}
 			qunlock(&row.lk);
-			free(w);
+			free(vw);
     Freecmd:
-			if(c){
+    			if(c){
+    				if(c->sess)
+    					sendp(c->sess->errorc, nil);
 				if(c->iseditcmd)
 					sendul(cedit, 0);
 				free(c->text);
@@ -842,8 +900,8 @@ waitthread(void *v)
 		case WCmd:
 			/* has this command already exited? */
 			lastp = nil;
-			for(p=pids; p!=nil; p=p->next){
-				if(p->pid == c->pid){
+			for(p=pids; c->vp.sess == nil && p!=nil; p=p->next){
+				if(p->pid == c->vp.id){
 					if(p->msg[0])
 						warning(c->md, "%s\n", p->msg);
 					if(lastp == nil)

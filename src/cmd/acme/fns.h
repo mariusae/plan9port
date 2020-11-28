@@ -25,7 +25,7 @@ void	savemouse(Window*);
 int	restoremouse(Window*);
 void	clearmouse(void);
 void	allwindows(void(*)(Window*, void*), void*);
-uint loadfile(int, uint, int*, int(*)(void*, uint, Rune*, int), void*, DigestState*);
+uint loadfile(Vfd, uint, int*, int(*)(void*, uint, Rune*, int), void*, DigestState*);
 void	movetodel(Window*);
 
 Window*	errorwin(Mntdir*, int);
@@ -105,3 +105,26 @@ Range range(int, int);
 #define	runemove(a, b, c)	memmove((a), (b), (c)*sizeof(Rune))
 
 int	ismtpt(char*);
+
+
+Remote*	remote(char*);
+Session*	rconnect(Remote*);
+void		serror(Session*, char*, ...);
+
+Vfd	vopen(char *file, int omode);
+Dir*	vdirfstat(Vfd fd);
+long	vdirread(Vfd fd, Dir **d);
+long vdirreadall(Vfd fd, Dir **d);
+int	vclose(Vfd *fd);
+long	vread(Vfd fd, void *buf, long nbytes);
+long	vwrite(Vfd fd, void *buf, long n);
+Dir*	vdirstat(char *file);
+Vfd	vcreate(char *file, int omode, ulong perm);
+int	vaccess(char *file, int mode);
+
+Completion* vcomplete(char*, char*);
+
+int vpostnote(Vpid vp, char *note);
+int vpcmp(Vpid vp1, Vpid vp2);
+Vpid vshell(Remote *r, int fd[3], char *cmd, char *dir);
+
