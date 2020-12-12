@@ -3,7 +3,7 @@ fn newwindow {
 	winid=$winctl(1)
 }
 
-fn winctl {	
+fn winctl {
 	echo $* | 9p write acme/$winid/ctl
 }
 
@@ -56,6 +56,6 @@ fn samfile {
                 echo /dev/null
         }
         if not {
-                9p read acme/$winid/tag | sed 1q | take 1       
+                9p read acme/$winid/tag | sed 1q | awk '{print $1}'
         }
 }
