@@ -518,6 +518,76 @@ dropcr(char *p, int n)
 	return w-p;
 }
 
+/*
+  * The ESC (27 / hex 0x1B / oct 033) is followed by zero or more
+  * intermediate "I" bytes between hex 0x20 and 0x2F inclusive,
+  * followed by a final "F" byte between 0x30 and 0x7E inclusive.
+  *
+  * printf("\033[31;1;4mHello\033[0m");
+  *
+  *
+  */
+int
+dropansi(char *p, int n, int len)
+{
+	static struct {
+		char buf[1<<20];
+		int r, w;
+	} ansi;
+	static char temp[8192];
+	char *w, *r;
+	int i, j;
+	r = p;
+	w = p;
+
+	/* Fast path: our buffer is empty and the input contains no escapes. */
+	for(i=0; ansi.w == 0 && i<n && p[i] != '\033'; i++);
+	if(i==n)
+		return n;
+
+	if(n > sizeof ansi.buf-ansi.w){
+		/* Overflow. Give up and spill the buffer. */
+		memmove(temp, p, n);
+		if(len > ansi.w)
+			len = ansi.w;
+		memmove(p, ansi.buf, len);
+		memmove(ansi.buf, ansi.buf+len, ansi.w-len);
+		ansi.w -= len;
+		return len;
+	}
+
+	memmove(ansi.buf+ansi.w, p, n);
+	ansi.w += n;
+
+	for(i=0; i<ansi.w; i++)
+		if(ansi.buf[i] == '\033'){
+			if(i == ansi.w-1){
+				/* In this case, we have to buffer. */
+				break;
+			}else if(ansi.buf[i+1] == '['){
+				for(j=i+2; j<ansi.w && ansi.buf[j] != 'm'; j++);
+				if(j == ansi.w){
+					/* We have not found the end of the escape sequence. */
+					break;
+				}else{
+					j++;
+					/* Eliminate the sequence [i, j] */
+					memmove(ansi.buf+i, ansi.buf+j, ansi.w-j);
+					ansi.w -= j-i;
+					i--; /* process the next character */
+				}
+			}
+		}
+
+	/* Write out up to i. */
+	if(i > len)
+		i = len;
+	memmove(p, ansi.buf, i);
+	memmove(ansi.buf, ansi.buf+i, ansi.w-i);
+	ansi.w -= i;
+	return i;
+}
+
 void
 stdoutproc(void *v)
 {
@@ -540,6 +610,10 @@ stdoutproc(void *v)
 			error(nil);
 
 		n = echocancel(buf+npart, n);
+		if(n == 0)
+			continue;
+
+		n = dropansi(buf+npart, n, 8192);
 		if(n == 0)
 			continue;
 
