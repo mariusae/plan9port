@@ -542,7 +542,7 @@ mksubfont(XFont *f, char *name, int lo, int hi, int size, int antialias)
 	sf->bits = m1;
 
 	CFRelease(baseString);
-	CFRelease(glyphInfo);
+//	CFRelease(glyphInfo);
 
 	return sf;
 }
