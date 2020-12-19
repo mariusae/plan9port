@@ -1,7 +1,6 @@
-#!/bin/bash -i
+#!/bin/zsh -i
 
 cd $HOME
-. ~/.bash_profile
 
 export PLAN9=${PLAN9:-/usr/local/plan9}
 export NAMESPACE=/tmp/ns.$USER.default
@@ -17,7 +16,7 @@ fi
 
 export NAMESPACE=$(9 namespace)
 
-/Users/marius/bin/darwin/acme
+$HOME/bin/darwin/acme
 # acme
 
 # case $(backingscale) in
