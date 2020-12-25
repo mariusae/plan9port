@@ -120,7 +120,7 @@ rconnect(Remote *r)
 	}
 
 	if(pipe(sfd) < 0){
-		warning(nil, "remote: %s: can't create pipe: %r", r->machine);
+		warning(nil, "remote: %s: can't create pipe: %r\n", r->machine);
 		goto Error;
 	}
 	rfork(RFFDG|RFNOTEG);
@@ -135,7 +135,7 @@ rconnect(Remote *r)
 	  of them should be part of the session. */
 
 	if((ret = threadspawn(sfd, av[0], av)) < 0){
-		warning(nil, "remote: %s: can't create remote proc", r->machine);
+		warning(nil, "remote: %s: can't create remote proc\n", r->machine);
 		goto Error;
 	}
 
@@ -230,7 +230,7 @@ rconnect(Remote *r)
 		goto Error;
 	}
 
-	warning(nil, "remote: %s: connected \n", r->machine);
+	warning(nil, "remote: %s: connected\n", r->machine);
 
 	r->sess = sess;
 	qunlock(&r->lk);
@@ -433,12 +433,12 @@ watchdogproc(void *v)
 				s->r->sess = nil;
 			qunlock(&s->r->lk);
 			if(msg == nil){
-				warning(nil, "remote: %s: remoting process died", s->r->machine);
+				warning(nil, "remote: %s: remoting process died\n", s->r->machine);
 			}else{
-				warning(nil, "remote: %s: %s", s->r->machine, msg);
+				warning(nil, "remote: %s: %s\n", s->r->machine, msg);
 				free(msg);
 				if(postnote(PNGROUP, s->remotepid, "kill") < 0)
-					warning(nil, "remote: %s: could not kill remoting process: %r", s->r->machine);
+					warning(nil, "remote: %s: could not kill remoting process: %\nr", s->r->machine);
 			}
 			for(i=0; i<nelem(s->localfd); i++)
 				if(s->localfd[i] >= 0)

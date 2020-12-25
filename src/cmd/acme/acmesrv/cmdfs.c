@@ -67,8 +67,7 @@ struct Xfid
 
 struct Cmd
 {
-	QLock lk;
-	int ref;
+	int ref; /* protected by cmdlk */
 
 	int id;
 	int pid;
@@ -106,6 +105,10 @@ struct Io
 static char *fsowner;
 static Channel *cwait;
 
+static QLock cmdlk;
+static Cmd *cmdlist;
+static int cmdnum;
+
 static Dirtab dirtab[] = {
 	{".",			QTDIR,	Qdir,		0500|DMDIR},
 	{"new",		QTDIR,	Qnew,	0500|DMDIR},
@@ -138,7 +141,6 @@ static void		xioproc(void*);
 static Cmd*	newcmd();
 static Cmd* 	findcmd(int which);
 static Cmd* 	findcmdpid(int pid);
-static void		incrcmd(Cmd*);
 static void		decrcmd(Cmd*);
 
 static void
@@ -301,8 +303,11 @@ fsclone(Fid *oldfid, Fid *newfid)
 	oldxfid = oldfid->aux;
 	newxfid = emalloc(sizeof *newxfid);
 	*newxfid = *oldxfid;
-
-	incrcmd(newxfid->c);
+	if(newxfid->c){
+		qlock(&cmdlk);
+		newxfid->c->ref++;
+		qunlock(&cmdlk);
+	}
 	newfid->aux = newxfid;
 	return nil;
 }
@@ -559,10 +564,6 @@ waitproc(void *v)
 
 }
 
-static QLock cmdlk;
-static Cmd *cmdlist;
-static int cmdnum;
-
 static Cmd*
 newcmd()
 {
@@ -589,9 +590,12 @@ findcmd(int id)
 	if(id == 0)
 		return nil;
 	qlock(&cmdlk);
-	for(c=cmdlist; c&&c->id!=id; c=c->next);
+	for(c=cmdlist; c; c=c->next)
+		if(c->id == id)
+			break;
+	if(c != nil)
+		c->ref++;
 	qunlock(&cmdlk);
-	incrcmd(c);
 	return c;
 }
 
@@ -600,20 +604,13 @@ findcmdpid(int pid)
 {
 	Cmd *c;
 	qlock(&cmdlk);
-	for(c=cmdlist; c&&c->pid!=pid; c=c->next);
+	for(c=cmdlist; c; c=c->next)
+		if(c->pid == pid)
+			break;
+	if(c != nil)
+		c->ref++;
 	qunlock(&cmdlk);
-	incrcmd(c);
 	return c;
-}
-
-static void
-incrcmd(Cmd *c)
-{
-	if(c == nil)
-		return;
-	qlock(&c->lk);
-	c->ref++;
-	qunlock(&c->lk);
 }
 
 static void
@@ -624,16 +621,18 @@ decrcmd(Cmd *c)
 
 	if(c == nil)
 		return;
-	qlock(&c->lk);
+	qlock(&cmdlk);
 	if(--c->ref > 0){
-		qunlock(&c->lk);
+		qunlock(&cmdlk);
 		return;
 	}
-	qlock(&cmdlk);
-	for(p = &cmdlist; *p!=c && *p!=nil; p=&(*p)->next);
+	for(p = &cmdlist; *p; p=&(*p)->next)
+		if(*p == c)
+			break;
 	if(*p)
 		*p = (*p)->next;
 	qunlock(&cmdlk);
+
 	free(c->body);
 	free(c->dir);
 	while(c->env){

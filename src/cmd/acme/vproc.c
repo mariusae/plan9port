@@ -35,7 +35,7 @@ inrelayproc(void *v)
 		int fd;
 	/* end of args */
 	void **a;
-	char buf[1024];
+	char buf[256];
 	int n;
 
 	a = v;
@@ -46,11 +46,12 @@ inrelayproc(void *v)
 	for(;;){
 		n = fsread(fid, buf, sizeof buf);
 		if(n <= 0)
-			break;
+			fprint(2, "inrelay %d read fail: %r\n", fd);
 		if(write(fd, buf, n) != n)
 			break;
 		/* TODO: report unexpected failures */
 	}
+	fprint(2, "inrelay done %d: %d\n", fd, n);
 	close(fd);
 	fsclose(fid);
 }
@@ -122,11 +123,11 @@ waitproc(void *v)
 	snprint(buf, sizeof buf, "%d/wait", vp->id);
 	fid = fsopen(vp->sess->cmd, buf, OREAD);
 	if(fid == nil){
-		warning(nil, "can't wait for remote process: %r");
+		warning(nil, "can't wait for remote process: %r\n");
 		return;
 	}
 	if((n=fsread(fid, buf, sizeof buf-1)) < 0){
-		warning(nil, "failed to wait for remote process: %r");
+		warning(nil, "failed to wait for remote process: %r\n");
 		return;
 	}
 	buf[n] = 0;
@@ -201,7 +202,8 @@ vshell(Remote *r, int fd[3], char *cmd, char *dir)
 		goto Error;
 
 	/* TODO: set this up in a single ctl message to
-	  * avoid the unnecessary roundtrips */
+	  * avoid the unnecessary roundtrips. These are noticeable
+	  * in high-latency connections. */
 	if(fsprint(ctl, "env %%=%s", getenv("%")) <= 0)
 		goto Error;
 	if(fsprint(ctl, "env winid=%s", getenv("winid")) <= 0)
@@ -223,10 +225,10 @@ vshell(Remote *r, int fd[3], char *cmd, char *dir)
 		goto Error;
 
 	outrelay(fd[0], fid[0], ctl);
-	inrelay(fid[1], fd[1]);
-	inrelay(fid[2], fd[2]);
-
-	/* TODO set up waitproc */
+	inrelay(fid[1], dup(fd[1], -1));
+	inrelay(fid[2], dup(fd[2], -1));
+	close(fd[1]);
+	close(fd[2]);
 
 	vp.sess = sess;
 	vp.id = id;
