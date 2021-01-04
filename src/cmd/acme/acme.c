@@ -142,12 +142,6 @@ threadmain(int argc, char *argv[])
 		if(winsize == nil)
 			goto Usage;
 		break;
-	case 'r':
-		/* fix: this means that -s has to be given before -r */
-/*
-		rconnect(ARGF());
-*/
-		break;
 	case 's':
 		racmename = ARGF();
 		if(racmename == nil)
@@ -332,7 +326,6 @@ threadmain(int argc, char *argv[])
 /*	threadcreate(shutdownthread, nil, STACK); */
 	threadcreate(waitrelaythread, nil, STACK);
 	threadnotify(shutdown, 1);
-/*	rconnect(remotes);*/
 	recvul(cexit);
 	killprocs();
 	threadexitsall(nil);
@@ -434,7 +427,7 @@ waitrelaythread(void *v)
 		w = recvp(c);
 		vw = emalloc(sizeof *vw);
 		vw->vp.id = w->pid;
-		vw->msg = w->msg;
+		vw->msg = estrdup(w->msg);
 		free(w);
 		sendp(cvwait, vw);
 	}
@@ -449,7 +442,6 @@ killprocs(void)
 /*	if(display) */
 /*		flushimage(display, 1); */
 
-	/* TODO: what about remote procs? */
 	for(c=command; c; c=c->next)
 		vpostnote(c->vp, "hangup");
 }
@@ -884,6 +876,8 @@ waitthread(void *v)
 				flushimage(display, 1);
 			}
 			qunlock(&row.lk);
+			free(vw->msg);
+			rclose(vp.sess);  /* XXX hack: session management should be better encapsulated.*/
 			free(vw);
     Freecmd:
     			if(c){

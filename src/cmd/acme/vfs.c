@@ -30,6 +30,7 @@ vopen(char *file, int omode)
 			goto Done;
 		/* TODO: strip prefix */
 		v.fid = fsopen(sess->fs, file, omode);
+		v.sess = sess;
 		if(v.fid != nil)
 			v.which = Vremote;
 	}else{
@@ -47,12 +48,15 @@ vdirstat(char *file)
 {
 	Remote *r;
 	Session *sess;
+	Dir *d;
 
 	if((r = remote(file)) == nil)
 		return dirstat(file);
 	if((sess = rconnect(r)) == nil)
 		return nil;
-	return fsdirstat(sess->fs, file);
+	d = fsdirstat(sess->fs, file);
+	rclose(sess);
+	return d;
 }
 
 Vfd
@@ -72,8 +76,10 @@ vcreate(char *file, int omode, ulong perm)
 	}
 	if((sess = rconnect(r)) != nil){
 		v.fid = fscreate(sess->fs, file, omode, perm);
-		if(v.fid != nil)
+		if(v.fid != nil){
 			v.which = Vremote;
+			v.sess = sess;
+		}
 	}
 	return v;
 }
@@ -129,6 +135,8 @@ vclose(Vfd *fd)
 	case Vremote:
 		fd->which = Vclosed;
 		fsclose(fd->fid);
+		rclose(fd->sess);
+		fd->sess = nil;
 		return 0;
 	}
 	return -1;
@@ -166,11 +174,14 @@ vaccess(char *file, int mode)
 {
 	Remote *r;
 	Session *sess;
+	int rv;
 
 	if((r = remote(file)) == nil)
 		return access(file, mode);
 	if((sess = rconnect(r)) == nil)
 		return -1;
 
-	return fsaccess(sess->fs, file, mode);
+	rv = fsaccess(sess->fs, file, mode);
+	rclose(sess);
+	return rv;
 }

@@ -1513,7 +1513,7 @@ runproc(void *argvp)
 		Channel *cvpid;
 		int iseditcmd;
 	/* end of args */
-	char *e, *t, *name, *filename, *dir, **av, *news;
+	char *e, *t, *name, *filename, *dir, **av, *news, *p;
 	Rune r, **incl;
 	int ac, w, inarg, i, n, fd, nincl, winid;
 	int sfd[3];
@@ -1543,7 +1543,14 @@ runproc(void *argvp)
 	iseditcmd = (uintptr)argv[9];
 	free(argv);
 
-	rem = nil;
+	if(rdir){
+		dir = runetobyte(rdir, ndir);
+		rem = remote(dir);
+		free(dir);
+		dir = nil;
+	}else{
+		rem = nil;
+	}
 
 	t = s;
 	while(*t==' ' || *t=='\n' || *t=='\t')
@@ -1551,13 +1558,19 @@ runproc(void *argvp)
 	for(e=t; *e; e++)
 		if(*e==' ' || *e=='\n' || *e=='\t' )
 			break;
-	name = emalloc((e-t)+2);
+	n = e-t;
+	name = emalloc(e-t+2);
 	memmove(name, t, e-t);
 	name[e-t] = 0;
 	e = utfrrune(name, '/');
 	if(e)
 		memmove(name, e+1, strlen(e+1)+1);	/* strcpy but overlaps */
 	strcat(name, " ");	/* add blank here for ease in waittask */
+	if(rem){
+		p = smprint("%s:%s", rem->machine, name);
+		free(name);
+		name = p;
+	}
 	c->name = bytetorune(name, &c->nname);
 	free(name);
 	pipechar = 0;

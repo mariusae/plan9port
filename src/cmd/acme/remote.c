@@ -94,6 +94,7 @@ rconnect(Remote *r)
 
 	qlock(&r->lk);
 	if((sess = r->sess) != nil){
+		sendul(sess->refc, 1);
 		qunlock(&r->lk);
 		return sess;
 	}
@@ -172,7 +173,7 @@ rconnect(Remote *r)
 	c = emalloc(sizeof *c);
 	c->vp.sess = nil;
 	c->vp.id = sess->remotepid;
-	name = smprint("remote:%s ", r->machine);
+	name = smprint("%s:remote ", r->machine);
 	c->name = bytetorune(name, &c->nname);
 	free(name);
 	c->text = estrdup("");
@@ -230,9 +231,12 @@ rconnect(Remote *r)
 		goto Error;
 	}
 
-	warning(nil, "remote: %s: connected\n", r->machine);
+	warning(nil, "remote: %s: connected \n", r->machine);
 
 	r->sess = sess;
+	fprint(2, "XXX\n");
+	sendul(sess->refc, 1); /* returned session */
+	fprint(2, "XXX 2\n");
 	qunlock(&r->lk);
 
 	return sess;
@@ -241,6 +245,14 @@ Error:
 	qunlock(&r->lk);
 	free(sess);
 	return nil;
+}
+
+void
+rclose(Session *sess)
+{
+	if(sess == nil)
+		return;
+	sendul(sess->refc, -1);
 }
 
 void
@@ -397,7 +409,7 @@ static void
 watchdogproc(void *v)
 {
 	Session *s;
-	char  *msg;
+	char  *msg, err[ERRMAX];
 	enum { Wref, Werror, Wstop, N };
 	int ref, x, stopping, i;
 	Alt alts[N+1];
@@ -437,8 +449,11 @@ watchdogproc(void *v)
 			}else{
 				warning(nil, "remote: %s: %s\n", s->r->machine, msg);
 				free(msg);
-				if(postnote(PNGROUP, s->remotepid, "kill") < 0)
-					warning(nil, "remote: %s: could not kill remoting process: %\nr", s->r->machine);
+				if(postnote(PNGROUP, s->remotepid, "kill") < 0){
+					rerrstr(err, sizeof err);
+					if(strcmp(err, "No such process") != 0)
+						warning(nil, "remote: %s: could not kill remoting process: %r\n", s->r->machine);
+				}
 			}
 			for(i=0; i<nelem(s->localfd); i++)
 				if(s->localfd[i] >= 0)

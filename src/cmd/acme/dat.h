@@ -540,6 +540,7 @@ struct Vfd
 		CFid *fid;
 		int fd;
 	};
+	Session *sess;
 };
 
 enum

@@ -44,14 +44,12 @@ inrelayproc(void *v)
 	free(a);
 
 	for(;;){
-		n = fsread(fid, buf, sizeof buf);
-		if(n <= 0)
-			fprint(2, "inrelay %d read fail: %r\n", fd);
+		if((n = fsread(fid, buf, sizeof buf)) <= 0)
+			break;
 		if(write(fd, buf, n) != n)
 			break;
 		/* TODO: report unexpected failures */
 	}
-	fprint(2, "inrelay done %d: %d\n", fd, n);
 	close(fd);
 	fsclose(fid);
 }
@@ -127,16 +125,30 @@ waitproc(void *v)
 		return;
 	}
 	if((n=fsread(fid, buf, sizeof buf-1)) < 0){
-		warning(nil, "failed to wait for remote process: %r\n");
-		return;
+		strcpy(buf, "unknown");
+		n = strlen(buf);
 	}
 	buf[n] = 0;
 
 	vw = emalloc(sizeof *vw);
 	vw->vp = *vp;
-	vw->msg = estrdup(buf);  /* LEAK! TODO: provide vwfree() */
+	vw->msg = estrdup(buf);
 	sendp(cvwait, vw);
 	free(vp);
+}
+
+static int
+vputenv(CFid *ctl, char *env)
+{
+	int rv;
+	char *p;
+
+	p = getenv(env);
+	if(p == nil)
+		return 0;
+	rv = fsprint(ctl, "env %s=%s", env, p);
+	free(p);
+	return rv;
 }
 
 int
@@ -183,15 +195,18 @@ vshell(Remote *r, int fd[3], char *cmd, char *dir)
 	CFid *ctl, *fid[3];
 	Vpid vp, *vpp;
 	int id, n;
-	char buf[128];
+	char buf[128], *p;
 
+	sess = nil;
 	ctl = nil;
 	fid[0] = fid[1] = fid[2] = nil;
 	sess = rconnect(r);
 	fs = sess->cmd;
 	ctl = fsopen(fs, "new/ctl", ORDWR);
-	if(ctl == nil)
+	if(ctl == nil){
+		rclose(sess);
 		return errorvp();
+	}
 	n = fsread(ctl, buf, sizeof buf-1);
 	if(n <= 0)
 		goto Error;
@@ -204,9 +219,13 @@ vshell(Remote *r, int fd[3], char *cmd, char *dir)
 	/* TODO: set this up in a single ctl message to
 	  * avoid the unnecessary roundtrips. These are noticeable
 	  * in high-latency connections. */
-	if(fsprint(ctl, "env %%=%s", getenv("%")) <= 0)
+	if(vputenv(ctl, "%") < 0)
 		goto Error;
-	if(fsprint(ctl, "env winid=%s", getenv("winid")) <= 0)
+	if(vputenv(ctl, "samfile") < 0)
+		goto Error;
+	if(vputenv(ctl, "acmeaddr") < 0)
+		goto Error;
+	if(vputenv(ctl, "winid") < 0)
 		goto Error;
 	if(dir && fsprint(ctl, "dir %s", dir) <= 0)
 		goto Error;
@@ -238,6 +257,7 @@ vshell(Remote *r, int fd[3], char *cmd, char *dir)
 	return vp;
 
 Error:
+	rclose(sess);
 	fsclose(ctl);
 	fsclose(fid[0]);
 	fsclose(fid[1]);

@@ -109,6 +109,7 @@ int	ismtpt(char*);
 
 Remote*	remote(char*);
 Session*	rconnect(Remote*);
+void		rclose(Session*);
 void		serror(Session*, char*, ...);
 
 Vfd	vopen(char *file, int omode);
