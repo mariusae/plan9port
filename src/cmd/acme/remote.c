@@ -64,7 +64,7 @@ Remote*
 remote(char *path)
 {
 	Remote *r;
-	char **p;
+	int i;
 	int len;
 
 	len = strlen(path);
@@ -72,8 +72,8 @@ remote(char *path)
 	/* This is not quite right; we should make sure the path is exactly the prefix, or
 	  else contains / after. */
 	for(r=remotes; r; r=r->next)
-	for(p=r->prefix; *p; p++)
-		if(strlen(*p) <= len && memcmp(*p, path, strlen(*p)) == 0)
+	for(i=0; i < r->nprefix; i++)
+		if(strlen(r->prefix[i]) <= len && memcmp(r->prefix[i], path, strlen(r->prefix[i])) == 0)
 			return r;
 	return nil;
 }

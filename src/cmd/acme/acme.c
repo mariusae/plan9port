@@ -83,7 +83,7 @@ void
 threadmain(int argc, char *argv[])
 {
 	int i;
-	char *p, *loadfile;
+	char *p, *q, *loadfile;
 	Column *c;
 	int ncol;
 	Display *d;
@@ -134,7 +134,7 @@ threadmain(int argc, char *argv[])
 		if(mtpt == nil)
 			goto Usage;
 		break;
-	case 'w':
+	case 'r':
 		swapscrollbuttons = TRUE;
 		break;
 	case 'W':
@@ -147,31 +147,32 @@ threadmain(int argc, char *argv[])
 		if(racmename == nil)
 			goto Usage;
 		break;
+	case 'R':
+		p = ARGF();
+		if(p == nil)
+			goto Usage;
+		q = strchr(p, ':');
+		if(q == nil)
+			goto Usage;
+		*q++ = 0;
+		for(r=remotes; r != nil; r = r->next)
+			if(strcmp(r->machine, p) == 0)
+				break;
+		if(r == nil){
+			r = emalloc(sizeof *r);
+			r->machine = estrdup(p);
+			r->next = remotes;
+			remotes = r;
+		}
+		r->nprefix++;
+		r->prefix = erealloc(r->prefix, sizeof(char*)*r->nprefix);
+		r->prefix[r->nprefix-1] = cleanname(estrdup(q));
+		break;
 	default:
 	Usage:
-		fprint(2, "usage: acme -a -c ncol -f fontname -F fixedwidthfontname -l loadfile -W winsize -r machine -s path\n");
+		fprint(2, "usage: acme -a -c ncol -f fontname -F fixedwidthfontname -l loadfile -W winsize -s path -R remotespec\n");
 		threadexitsall("usage");
 	}ARGEND
-
-	/*
-		TODO: argparse. Note: need to cleanname.
-	*/
-	r = emalloc(sizeof *r);
-	r->prefix = emalloc(sizeof(char*)*3);
-	r->prefix[0] = "/tmp/test";
-	r->prefix[1] = "/tmp/test1";
-	r->prefix[2] = nil;
-	r->machine = "localhost";
-	remotes = r;
-	r = emalloc(sizeof *r);
-	r->prefix = emalloc(sizeof(char*)*4);
-	r->prefix[0] = "/home/meriksen";
-	r->prefix[1] =  "/data/users/meriksen";
-	r->prefix[2] = "/usr/local/fbcode";
-	r->prefix[2] = nil;
-	r->machine = "dev";
-	r->next = remotes;
-	remotes = r;
 
 	fontnames[0] = estrdup(fontnames[0]);
 	fontnames[1] = estrdup(fontnames[1]);

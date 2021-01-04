@@ -517,6 +517,7 @@ struct Remote
 {
 	char* machine;
 
+	int nprefix;
 	char **prefix;
 
 	Remote	*next;

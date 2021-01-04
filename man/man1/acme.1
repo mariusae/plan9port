@@ -23,6 +23,14 @@ acme, win, awd \- interactive text windows
 .I mtpt
 ]
 [
+.B -R
+.I remote
+\&... ]
+[
+.B -s
+.I path
+]
+[
 .B -l
 .I file
 |
@@ -90,6 +98,14 @@ to use FUSE (see
 to mount itself at
 .IR mtpt .
 (Experimental.)
+.PP
+The
+.B -R
+option configures a remoting path.
+A remote name is followed by ":"
+and a path to attach to the remote.
+Repeated options configure additonal paths.
+(Experimental. See below section on remoting.)
 .PP
 .SS Windows
 .I Acme
@@ -744,6 +760,37 @@ programs such as
 and
 .I awd
 reside.
+.SS "Remoting
+Acme can transparently edit files
+and run program (including acme applications)
+on other hosts through an experimental remoting layer.
+Paths with prefixes that are attached to remotes
+(via the
+.B -R
+command line option;
+see above)
+are transparently fetched from the remote host.
+Likewise,
+programs that are run from such paths are run on the remote host.
+Programs are run in an environment
+that includes the acme 9p filesystem and the plumber.
+Thus, most acme programs will also work transparently with remoting.
+.PP
+Remoting is implemented by starting
+.IR acmesrv (1)
+on the remote host via
+.IR ssh (1).
+Acme becomes a client of this server:
+it forwards its local plumber
+and acme 9P services
+to the remote host,
+and imports the remote filesystem (also via 9P)
+for local access.
+.PP
+This results in an experience that is nearly transparent:
+remote files can be edited naturally,
+and commands invoked on these files are run on the remote host itself.
+
 .SH FILES
 .TF $HOME/acme.dump
 .TP
