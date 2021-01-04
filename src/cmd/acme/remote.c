@@ -234,9 +234,7 @@ rconnect(Remote *r)
 	warning(nil, "remote: %s: connected \n", r->machine);
 
 	r->sess = sess;
-	fprint(2, "XXX\n");
 	sendul(sess->refc, 1); /* returned session */
-	fprint(2, "XXX 2\n");
 	qunlock(&r->lk);
 
 	return sess;
