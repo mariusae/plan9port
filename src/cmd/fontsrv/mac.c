@@ -481,18 +481,14 @@ mksubfont(XFont *f, char *name, int lo, int hi, int size, int antialias)
 		CTLineRef line;
 		CGRect r;
 		CGPoint p1;
-<<<<<<< HEAD
+
 		CFStringRef keys[] = { kCTFontAttributeName, kCTForegroundColorAttributeName, kCTGlyphInfoAttributeName };
-		CFTypeRef values[] = { font, white, glyphInfo };
+		CFTypeRef values[] = { font, black, glyphInfo };
 		int size = 2;
 
 		if(strlen(name) == 12 && strcmp(name, "LucidaGrande") == 0) {
 			size = 3;
 		}
-=======
-		CFStringRef keys[] = { kCTFontAttributeName, kCTForegroundColorAttributeName };
-		CFTypeRef values[] = { font, black };
->>>>>>> upstream/master
 
 		sprint(buf, "%C", (Rune)mapUnicode(name, i));
  		str = c2mac(buf);
