@@ -613,9 +613,11 @@ stdoutproc(void *v)
 		if(n == 0)
 			continue;
 
+/*
 		n = dropansi(buf+npart, n, 8192);
 		if(n == 0)
 			continue;
+*/
 
 		n = dropcrnl(buf+npart, n);
 		if(n == 0)

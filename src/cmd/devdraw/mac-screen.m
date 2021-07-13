@@ -285,10 +285,16 @@ rpc_attach(Client *c, char *label, char *winsize)
 	id<MTLDevice> device = nil;
 	allDevices = MTLCopyAllDevices();
 	for(id mtlDevice in allDevices) {
+		if ([mtlDevice isRemovable]) {
+			device = mtlDevice;
+			break;
+		}
+/*
 		if ([mtlDevice isLowPower] && ![mtlDevice isRemovable]) {
 			device = mtlDevice;
 			break;
 		}
+*/
 	}
 	if(!device)
 		device = MTLCreateSystemDefaultDevice();
@@ -375,6 +381,13 @@ rpc_setcursor(Client *client, Cursor *c, Cursor2 *c2)
 }
 
 - (void)setcursor:(Cursor*)c cursor2:(Cursor2*)c2 {
+ 	if(!c) {
+ 		[[NSCursor arrowCursor] set];
+ 		self.currentCursor = [NSCursor arrowCursor];
+ 		[self.win invalidateCursorRectsForView:self];
+//		[NSCursor unhide];
+		return;
+	}
 	if(!c) {
 		c = &bigarrow;
 		c2 = &bigarrow2;

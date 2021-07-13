@@ -22,6 +22,7 @@ static void runwriter(Session *sess, char *name, Channel *c, int fd);
 static void rundemuxer(Session *sess, char *name, int fd, int nc, Channel **c);
 static void runmuxer(Session *sess, char *name, int fd, Channel *c, int dest);
 static void	watchdogproc(void*);
+static void sendcommandproc(void *v);
 
 static void* 	srecvp(Session *s, Channel *c);
 static int		ssendp(Session *s, Channel *c, void *p);
@@ -109,7 +110,7 @@ rconnect(Remote *r)
 	av[ac++] = racmename;
 	av[ac++] = "-n";
 	av[ac++] = "/tmp/ns.acmesrv";
-//	av[ac++] = "-D";
+/*	av[ac++] = "-D";*/
 	av[ac++] = nil;
 
 	if(debug){
@@ -178,12 +179,18 @@ rconnect(Remote *r)
 	free(name);
 	c->text = estrdup("");
 	c->sess = sess;
-	sendp(ccommand, c);
+
+	/* HACK ALERT: we send the command asynchronously to avoid
+	 * a deadlock between the sending the command and displaying
+	 * errors in the output. This is because we may hold the row.lk
+	 * while connecting. Fix this.
+	 */
+	/* 	sendp(ccommand, c); */
+	threadcreate(sendcommandproc, c, STACK*2);
 
 	/* Monitor the session and provide proper teardown. */
 	threadcreate(watchdogproc, sess, STACK*2);
 	sendul(sess->refc, 1); /* ssh proc */
-
 	for(i=0; i<nelem(sess->localc); i++){
 		sess->localc[i] = chancreate(sizeof(Emsg*), 1);
 		switch(i){
@@ -233,10 +240,10 @@ rconnect(Remote *r)
 
 	warning(nil, "remote: %s: connected \n", r->machine);
 
+
 	r->sess = sess;
 	sendul(sess->refc, 1); /* returned session */
 	qunlock(&r->lk);
-
 	return sess;
 
 Error:
@@ -469,6 +476,12 @@ watchdogproc(void *v)
 	chanfree(s->refc);
 	chanfree(s->stopc);
 	free(s);
+}
+
+static void
+sendcommandproc(void *v)
+{
+	sendp(ccommand, v);
 }
 
 static void*

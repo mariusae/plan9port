@@ -61,6 +61,8 @@ char		*menu2str[] = {
 	"Push",
 	"goinstall",
 	"gotest",
+	"Pyre",
+	"Sanity",
 	"winx",
 	nil
 };
