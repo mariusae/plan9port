@@ -6,4 +6,7 @@ PATH=$PATH:$PLAN9/bin
 export PLAN9
 export PATH
 
+SHELL=$PLAN9/bin/rc
+export SHELL
+
 exec $PLAN9/bin/acmesrv "$@"
