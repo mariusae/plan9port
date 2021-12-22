@@ -1,0 +1,7 @@
+#!/bin/bash
+
+PLAN9=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+PATH=$PATH:$PLAN9/bin
+
+export PLAN9
+export PATH
