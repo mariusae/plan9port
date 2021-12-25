@@ -35,7 +35,7 @@ static void		eput(Emsg*);
 /* can be overriden by acme -s */
 char* racmename = "acmesrv";
 
-static int debug = 1;
+static int debug = 0;
 static int dfd = -1;
 
 static char *Psrv[Pmax] = {
@@ -531,7 +531,8 @@ dial9p(char *srv)
 
 	fd = dial(addr, 0, 0, 0);
 	if(fd < 0){
-		fprint(dfd, "dial9p: %s error: %r\n", addr);
+		if(debug)
+			fprint(dfd, "dial9p: %s error: %r\n", addr);
 		return -1;
 	}
 /*	fcntl(fd, F_SETFL, FD_CLOEXEC);*/

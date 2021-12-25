@@ -53,17 +53,17 @@ static int	shutdown(void*, char*);
 void waitrelaythread(void*);
 
 char		*menu2str[] = {
+	"win",
 	"Ldef",
-	"Pop",
+//	"Pop",
 	"Ltype",
 	"Lrefs",
 	"Lhov",
-	"Push",
+//	"Push",
 	"goinstall",
 	"gotest",
 	"Pyre",
 	"Sanity",
-	"winx",
 	nil
 };
 
