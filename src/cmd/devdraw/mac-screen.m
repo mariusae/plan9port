@@ -288,16 +288,10 @@ rpc_attach(Client *c, char *label, char *winsize)
 	id<MTLDevice> device = nil;
 	allDevices = MTLCopyAllDevices();
 	for(id mtlDevice in allDevices) {
-		if ([mtlDevice isRemovable]) {
-			device = mtlDevice;
-			break;
-		}
-/*
 		if ([mtlDevice isLowPower] && ![mtlDevice isRemovable]) {
 			device = mtlDevice;
 			break;
 		}
-*/
 	}
 	if(!device)
 		device = MTLCreateSystemDefaultDevice();
