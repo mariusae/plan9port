@@ -9,6 +9,7 @@
 #include <fcall.h>
 #include <plumb.h>
 #include <libsec.h>
+#include <9pclient.h>
 #include "dat.h"
 #include "fns.h"
 
@@ -346,8 +347,8 @@ fsysattach(Xfid *x, Fid *f)
 	Mntdir *m;
 	char buf[128];
 
-	if(strcmp(x->fcall.uname, user) != 0)
-		return respond(x, &t, Eperm);
+	//if(strcmp(x->fcall.uname, user) != 0)
+	//	return respond(x, &t, Eperm);
 	f->busy = TRUE;
 	f->open = FALSE;
 	f->qid.path = Qdir;

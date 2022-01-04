@@ -11,6 +11,7 @@
 #include <9pclient.h>
 #include <plumb.h>
 #include <libsec.h>
+#include <9pclient.h>
 #include "dat.h"
 #include "fns.h"
 
@@ -475,7 +476,7 @@ includefile(Rune *dir, Rune *file, int nfile)
 	m = runestrlen(dir);
 	a = emalloc((m+1+nfile)*UTFmax+1);
 	sprint(a, "%S/%.*S", dir, nfile, file);
-	n = access(a, 0);
+	n = vaccess(a, 0);
 	free(a);
 	if(n < 0)
 		return runestr(nil, 0);
@@ -705,7 +706,7 @@ expandfile(Text *t, uint q0, uint q1, Expand *e, int reverse)
 	if(w != nil)
 		goto Isfile;
 	/* if it's the name of a file, it's a file */
-	if(ismtpt(e->bname) || access(e->bname, 0) < 0){
+	if(ismtpt(e->bname) || vaccess(e->bname, 0) < 0){
 		free(e->bname);
 		e->bname = nil;
 		goto Isntfile;

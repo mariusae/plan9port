@@ -10,6 +10,7 @@
 #include <bio.h>
 #include <plumb.h>
 #include <libsec.h>
+#include <9pclient.h>
 #include "dat.h"
 #include "fns.h"
 
@@ -421,7 +422,7 @@ rowdump(Row *row, char *file)
 					0, 0,
 					100.0*(w->r.min.y-c->r.min.y)/Dy(c->r),
 					fontname);
-			}else if((w->dirty==FALSE && access(a, 0)==0) || w->isdir){
+			}else if((w->dirty==FALSE && vaccess(a, 0)==0) || w->isdir){
 				dumped = FALSE;
 				t->file->dumpid = w->id;
 				Bprint(b, "f%11d %11d %11d %11d %11.7f %s\n", i, w->id,

@@ -9,6 +9,7 @@
 #include <fcall.h>
 #include <plumb.h>
 #include <libsec.h>
+#include <9pclient.h>
 #include "dat.h"
 #include "edit.h"
 #include "fns.h"
@@ -302,6 +303,7 @@ e_cmd(Text *t, Cmd *cp)
 	int i, isdir, q0, q1, fd, nulls, samename, allreplaced;
 	char *s, tmp[128];
 	Dir *d;
+	Vfd v;
 
 	f = t->file;
 	q0 = addr.r.q0;
@@ -337,7 +339,10 @@ e_cmd(Text *t, Cmd *cp)
 	}
 	elogdelete(f, q0, q1);
 	nulls = 0;
-	loadfile(fd, q1, &nulls, readloader, f, nil);
+	/* TODO: use vfs. */
+	v.which = Vlocal;
+	v.fd = fd;
+	loadfile(v, q1, &nulls, readloader, f, nil);
 	free(s);
 	close(fd);
 	if(nulls)
@@ -1002,14 +1007,14 @@ filelooper(Text *t, Cmd *cp, int XY)
 	 */
 	allwindows(alllocker, (void*)1);
 	globalincref = 1;
-	
+
 	/*
 	 * Unlock the window running the X command.
 	 * We'll need to lock and unlock each target window in turn.
 	 */
 	if(t && t->w)
 		winunlock(t->w);
-	
+
 	for(i=0; i<loopstruct.nw; i++) {
 		targ = &loopstruct.w[i]->body;
 		if(targ && targ->w)

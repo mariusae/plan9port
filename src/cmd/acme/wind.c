@@ -9,6 +9,7 @@
 #include <fcall.h>
 #include <plumb.h>
 #include <libsec.h>
+#include <9pclient.h>
 #include "dat.h"
 #include "fns.h"
 

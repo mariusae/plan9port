@@ -48,13 +48,21 @@ typedef	struct	Elog Elog;
 typedef	struct	Mntdir Mntdir;
 typedef	struct	Range Range;
 typedef	struct	Rangeset Rangeset;
+typedef	struct	Remote Remote;
 typedef	struct	Reffont Reffont;
 typedef	struct	Row Row;
 typedef	struct	Runestr Runestr;
+typedef	struct	Session Session;
 typedef	struct	Text Text;
 typedef	struct	Timer Timer;
+typedef	struct	Vfd Vfd;
+typedef	struct	Vpid Vpid;
+typedef	struct	Vwaitmsg Vwaitmsg;
 typedef	struct	Window Window;
 typedef	struct	Xfid Xfid;
+
+typedef	struct	Completion Completion;
+
 
 struct Runestr
 {
@@ -105,7 +113,7 @@ struct Buffer
 };
 void		bufinsert(Buffer*, uint, Rune*, uint);
 void		bufdelete(Buffer*, uint, uint);
-uint		bufload(Buffer*, uint, int, int*, DigestState*);
+uint		bufload(Buffer*, uint, Vfd, int*, DigestState*);
 void		bufread(Buffer*, uint, Rune*, uint);
 void		bufclose(Buffer*);
 void		bufreset(Buffer*);
@@ -153,7 +161,7 @@ void		fileclose(File*);
 void		filedelete(File*, uint, uint);
 void		filedeltext(File*, Text*);
 void		fileinsert(File*, uint, Rune*, uint);
-uint		fileload(File*, uint, int, int*, DigestState*);
+uint		fileload(File*, uint, Vfd, int*, DigestState*);
 void		filemark(File*);
 void		filereset(File*);
 void		filesetname(File*, Rune*, int);
@@ -220,6 +228,7 @@ void		textreset(Text*);
 int		textresize(Text*, Rectangle, int);
 void		textscrdraw(Text*);
 void		textscroll(Text*, int);
+void		xtextscroll(Text*, int);
 void		textselect(Text*);
 int		textselect2(Text*, uint*, uint*, Text**);
 int		textselect23(Text*, uint*, uint*, Image*, int);
@@ -350,14 +359,27 @@ struct Timer
 	Timer	*next;
 };
 
+struct Vpid
+{
+	Session *sess;
+	int id;
+};
+
+struct Vwaitmsg
+{
+	Vpid vp;
+	char *msg;
+};
+
 struct Command
 {
-	int		pid;
+	Vpid		vp;
 	Rune		*name;
 	int		nname;
 	char		*text;
 	char		**av;
 	int		iseditcmd;
+	Session	*sess;
 	Mntdir	*md;
 	Command	*next;
 };
@@ -466,6 +488,65 @@ struct Expand
 
 enum
 {
+	Pexportfs,
+	Pcmdfs,
+	Pplumb,
+	Pacme,
+	Pmax,
+};
+
+struct Session
+{
+	Remote *r;
+	CFsys *fs;
+	CFsys *cmd;
+
+	int remotepid;
+
+	Channel *localc[Pmax];
+	Channel *remotec;
+
+	Channel *errorc;
+	Channel *refc;
+	Channel *stopc;
+
+	int localfd[Pmax];
+	int remotefd;
+};
+
+struct Remote
+{
+	char* machine;
+
+	int nprefix;
+	char **prefix;
+
+	Remote	*next;
+
+	QLock	lk;
+	Session	*sess;
+};
+
+enum
+{
+	Vlocal,
+	Vremote,
+	Vclosed,
+	Verr,
+};
+
+struct Vfd
+{
+	int which;
+	union{
+		CFid *fid;
+		int fd;
+	};
+	Session *sess;
+};
+
+enum
+{
 	/* fbufalloc() guarantees room off end of BUFSIZE */
 	BUFSIZE = Maxblock+IOHDRSZ,	/* size from fbufalloc() */
 	RBUFSIZE = BUFSIZE/sizeof(Rune),
@@ -556,6 +637,8 @@ int			messagesize;		/* negotiated in 9P version setup */
 int			globalautoindent;
 int			dodollarsigns;
 char*		mtpt;
+char*		racmename;
+Remote*		remotes;
 
 enum
 {
@@ -564,7 +647,7 @@ enum
 };
 
 Channel	*cplumb;		/* chan(Plumbmsg*) */
-Channel	*cwait;		/* chan(Waitmsg) */
+Channel	*cvwait;		/* chan(Vwaitmsg) */
 Channel	*ccommand;	/* chan(Command*) */
 Channel	*ckill;		/* chan(Rune*) */
 Channel	*cxfidalloc;	/* chan(Xfid*) */
@@ -578,5 +661,10 @@ Channel	*cedit;		/* chan(int) */
 Channel	*cwarn;		/* chan(void*)[1] (really chan(unit)[1]) */
 
 QLock	editoutlk;
+
+#ifndef Extern
+#define Extern extern
+#endif
+Extern Screen *wscreen;
 
 #define	STACK	65536

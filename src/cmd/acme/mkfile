@@ -18,11 +18,15 @@ OFILES=\
 	logf.$O\
 	look.$O\
 	regx.$O\
+	remote.$O\
 	rows.$O\
 	scrl.$O\
 	text.$O\
 	time.$O\
 	util.$O\
+	vcomplete.$O\
+	vfs.$O\
+	vproc.$O\
 	wind.$O\
 	xfid.$O\
 

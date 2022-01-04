@@ -9,6 +9,7 @@
 #include <fcall.h>
 #include <plumb.h>
 #include <libsec.h>
+#include <9pclient.h>
 #include "dat.h"
 #include "fns.h"
 
@@ -164,7 +165,7 @@ fileunsetname(File *f, Buffer *delta)
 }
 
 uint
-fileload(File *f, uint p0, int fd, int *nulls, DigestState *h)
+fileload(File *f, uint p0, Vfd fd, int *nulls, DigestState *h)
 {
 	if(f->seq > 0)
 		error("undo in file.load unimplemented");

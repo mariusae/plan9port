@@ -9,6 +9,7 @@
 #include <fcall.h>
 #include <plumb.h>
 #include <libsec.h>
+#include <9pclient.h>
 #include "dat.h"
 #include "fns.h"
 
@@ -232,7 +233,7 @@ bufloader(void *v, uint q0, Rune *r, int nr)
 }
 
 uint
-loadfile(int fd, uint q0, int *nulls, int(*f)(void*, uint, Rune*, int), void *arg, DigestState *h)
+loadfile(Vfd fd, uint q0, int *nulls, int(*f)(void*, uint, Rune*, int), void *arg, DigestState *h)
 {
 	char *p;
 	Rune *r;
@@ -249,7 +250,7 @@ loadfile(int fd, uint q0, int *nulls, int(*f)(void*, uint, Rune*, int), void *ar
 	 * last pass, possibly representing a partial rune.
 	 */
 	while(n > 0){
-		n = read(fd, p+m, Maxblock);
+		n = vread(fd, p+m, Maxblock);
 		if(n < 0){
 			warning(nil, "read error in Buffer.load");
 			break;
@@ -272,7 +273,7 @@ loadfile(int fd, uint q0, int *nulls, int(*f)(void*, uint, Rune*, int), void *ar
 }
 
 uint
-bufload(Buffer *b, uint q0, int fd, int *nulls, DigestState *h)
+bufload(Buffer *b, uint q0, Vfd fd, int *nulls, DigestState *h)
 {
 	if(q0 > b->nc)
 		error("internal error: bufload");
