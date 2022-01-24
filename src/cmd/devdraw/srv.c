@@ -416,11 +416,11 @@ matchmouse(Client *c)
 void
 gfx_mouseresized(Client *c)
 {
-	gfx_mousetrack(c, -1, -1, -1, -1);
+	gfx_mousetrack(c, -1, -1, -1, 0, -1);
 }
 
 void
-gfx_mousetrack(Client *c, int x, int y, int b, uint ms)
+gfx_mousetrack(Client *c, int x, int y, int b, int scroll, uint ms)
 {
 	Mouse *m;
 
@@ -456,6 +456,7 @@ gfx_mousetrack(Client *c, int x, int y, int b, uint ms)
 		m->xy.x = x;
 		m->xy.y = y;
 		m->buttons = b;
+		m->scroll = scroll;
 		m->msec = ms;
 
 		c->mouse.m[c->mouse.wi] = *m;

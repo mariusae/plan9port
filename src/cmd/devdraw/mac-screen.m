@@ -297,6 +297,7 @@ rpc_attach(Client *c, char *label, char *winsize)
 		device = MTLCreateSystemDefaultDevice();
 
 	DrawLayer *layer = (DrawLayer*)[self layer];
+
 	self.dlayer = layer;
 	layer.device = device;
 	layer.cmd = [device newCommandQueue];
@@ -378,6 +379,16 @@ rpc_setcursor(Client *client, Cursor *c, Cursor2 *c2)
 }
 
 - (void)setcursor:(Cursor*)c cursor2:(Cursor2*)c2 {
+
+/*
+ 	if(!c) {
+ 		[[NSCursor arrowCursor] set];
+ 		self.currentCursor = [NSCursor arrowCursor];
+ 		[self.win invalidateCursorRectsForView:self];
+//		[NSCursor unhide];
+		return;
+	}
+*/
 	if(!c) {
 		c = &bigarrow;
 		c2 = &bigarrow2;
@@ -451,8 +462,8 @@ rpc_setcursor(Client *client, Cursor *c, Cursor2 *c2)
 		self.client->mouserect = Rect(0, 0, size.width, size.height);
 
 		LOG(@"initimg %.0f %.0f", size.width, size.height);
-
 		self.img = allocmemimage(self.client->mouserect, XRGB32);
+
 		if(self.img == nil)
 			panic("allocmemimage: %r");
 		if(self.img->data == nil)
@@ -471,8 +482,8 @@ rpc_setcursor(Client *client, Cursor *c, Cursor2 *c2)
 		scale = [self.win backingScaleFactor];
 		[self.dlayer setDrawableSize:size];
 		[self.dlayer setContentsScale:scale];
-
 		// NOTE: This is not really the display DPI.
+
 		// On retina, scale is 2; otherwise it is 1.
 		// This formula gives us 220 for retina, 110 otherwise.
 		// That's not quite right but it's close to correct.
@@ -547,8 +558,10 @@ rpc_resizeimg(Client *c)
 - (void)windowDidResize:(NSNotification *)notification {
 	if(![self inLiveResize] && self.img) {
 		[self resizeimg];
+
 	}
 }
+
 - (void)viewDidEndLiveResize
 {
 	[super viewDidEndLiveResize];
@@ -602,12 +615,17 @@ rpc_resizewindow(Client *c, Rectangle r)
 - (void)scrollWheel:(NSEvent*)e
 {
 	CGFloat s;
+	int b;
 
 	s = [e scrollingDeltaY];
 	if(s > 0.0f)
-		[self sendmouse:8];
+		b = 8;
 	else if (s < 0.0f)
-		[self sendmouse:16];
+		b = 16;
+	else
+		return;
+
+	[self scrollmouse:b by:s];
 }
 
 - (void)keyDown:(NSEvent*)e
@@ -653,6 +671,30 @@ rpc_resizewindow(Client *c, Rectangle r)
 {
 	if(fabs([e magnification]) > 0.02)
 		[[self window] toggleFullScreen:nil];
+}
+
+- (void)smartMagnifyWithEvent:(NSEvent *)e
+{
+
+	if([e type] != NSEventTypeSmartMagnify)
+		return;
+
+	[self sendmouse:2];
+	[self sendmouse:0];
+}
+
+int stage = 0;
+
+- (void)pressureChangeWithEvent:(NSEvent *)e
+{
+	if(e.stage == 2 && stage < 2){
+		[self sendmouse:0];	// hack gross
+		[self sendmouse:4];
+		[self sendmouse:0];
+	}else if(e.stage < 2 && stage == 2) {
+//		[self sendmouse:0];
+	}
+	stage = e.stage;
 }
 
 - (void)touchesBeganWithEvent:(NSEvent*)e
@@ -702,10 +744,20 @@ rpc_resizewindow(Client *c, Rectangle r)
 	if(b == 1){
 		if(m & NSEventModifierFlagOption){
 			gfx_abortcompose(self.client);
+			if(m & NSEventModifierFlagControl){
+				[self sendmouse:2];
+				[self sendmouse:1];
+				return;
+			}
 			b = 2;
-		}else
-		if(m & NSEventModifierFlagCommand)
+		}else if(m & NSEventModifierFlagCommand)
 			b = 4;
+		else if(m & NSEventModifierFlagControl)
+			b = 8;
+	}else if(b == 4){
+		m = [e modifierFlags];
+		if(m & NSEventModifierFlagCommand)
+			b = 8;
 	}
 	if(m & NSEventModifierFlagShift)
 		b <<= 5;
@@ -714,13 +766,18 @@ rpc_resizewindow(Client *c, Rectangle r)
 
 - (void)sendmouse:(NSUInteger)b
 {
+	[self scrollmouse:b by:0];
+}
+
+- (void)scrollmouse:(NSUInteger)b by:(NSUInteger)scroll
+{
 	NSPoint p;
 
 	p = [self.window convertPointToBacking:
 		[self.window mouseLocationOutsideOfEventStream]];
 	p.y = Dy(self.client->mouserect) - p.y;
 	// LOG(@"(%g, %g) <- sendmouse(%d)", p.x, p.y, (uint)b);
-	gfx_mousetrack(self.client, p.x, p.y, b, msec());
+	gfx_mousetrack(self.client, p.x, p.y, b, scroll, msec());
 	if(b && _lastInputRect.size.width && _lastInputRect.size.height)
 		[self resetLastInputRect];
 }
