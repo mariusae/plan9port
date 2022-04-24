@@ -52,6 +52,33 @@ void	readfile(Column*, char*);
 static int	shutdown(void*, char*);
 void waitrelaythread(void*);
 
+char		*menu2str[] = {
+	"win",
+	"Alt",
+	"Ldef",
+//	"Pop",
+	"Ltype",
+	"Lrefs",
+	"Lhov",
+//	"Push",
+	"goinstall",
+	"gotest",
+	"Pyre",
+	"Sanity",
+	"Format",
+	"Pasteurl",
+	"Today",
+	"Note+",
+	"Note-",
+	nil
+};
+
+
+Menu menu2 =
+{
+	menu2str
+};
+
 
 void
 derror(Display *d, char *errorstr)
@@ -562,7 +589,9 @@ void
 mousethread(void *v)
 {
 	Text *t, *argt;
-	int but;
+	int but, menu;
+	Runestr dir;
+	char *cmd;
 	uint q0, q1;
 	Window *w;
 	Plumbmsg *pm;
@@ -667,14 +696,10 @@ mousethread(void *v)
 				goto Continue;
 			}
 			/* scroll buttons, wheels, etc. */
-			if(w != nil && (m.buttons & (8|16))){
-				if(m.buttons & 8)
-					but = Kscrolloneup;
-				else
-					but = Kscrollonedown;
+			if(w != nil && (m.scroll != 0)){
 				winlock(w, 'M');
 				t->eq0 = ~0;
-				texttype(t, but);
+				xtextscroll(t, m.scroll);
 				winunlock(w);
 				goto Continue;
 			}
@@ -716,6 +741,21 @@ mousethread(void *v)
 				}else if(m.buttons & (4|(4<<Shift))){
 					if(textselect3(t, &q0, &q1))
 						look3(t, q0, q1, FALSE, (m.buttons&(4<<Shift))!=0);
+				}else if((m.buttons & 8) && w){
+					menu = menuhit(4, mousectl, &menu2, nil);
+					if(menu != -1){
+						dir = dirname(t, nil, 0);
+						if(dir.nr==1 && dir.r[0]=='.'){	/* sigh */
+							free(dir.r);
+							dir.r = nil;
+							dir.nr = 0;
+						}
+						cmd = emalloc(strlen(menu2str[menu])+1);
+						sprint(cmd, "%s", menu2str[menu]);
+						if(t->w)
+							incref(&t->w->ref);
+						run(t->w, cmd, dir.r, dir.nr, TRUE, nil, nil, FALSE);
+					}
 				}
 				if(w)
 					winunlock(w);
