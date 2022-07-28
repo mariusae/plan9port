@@ -218,7 +218,14 @@ vshell(Remote *r, int fd[3], char *cmd, char *dir)
 
 	/* TODO: set this up in a single ctl message to
 	  * avoid the unnecessary roundtrips. These are noticeable
-	  * in high-latency connections. */
+	  * in high-latency connections.
+	  *
+	  *
+	  *
+	  * Or, better: make this concurrent (all of it), so that we don't
+	  * need to sync between. Same in FS code. This might need multiple sessions.
+	  * Unless we can multiplex messages onto the same fsfile.
+	   */
 	if(vputenv(ctl, "%") < 0)
 		goto Error;
 	if(vputenv(ctl, "samfile") < 0)

@@ -18,9 +18,9 @@ typedef 	struct Emsg	Emsg;
 
 static void	readerproc(void *v);
 static void	writerproc(void *v);
-static void runwriter(Session *sess, char *name, Channel *c, int fd);
-static void rundemuxer(Session *sess, char *name, int fd, int nc, Channel **c);
-static void runmuxer(Session *sess, char *name, int fd, Channel *c, int dest);
+static void runwriter(Session *sess, char *name, int debug, Channel *c, int fd);
+static void rundemuxer(Session *sess, char *name, int debug, int fd, int nc, Channel **c);
+static void runmuxer(Session *sess, char *name, int debug, int fd, Channel *c, int dest);
 static void	watchdogproc(void*);
 static void sendcommandproc(void *v);
 
@@ -110,7 +110,7 @@ rconnect(Remote *r)
 	av[ac++] = racmename;
 	av[ac++] = "-n";
 	av[ac++] = "/tmp/ns.acmesrv";
-/*	av[ac++] = "-D";*/
+	/*av[ac++] = "-D";*/
 	av[ac++] = nil;
 
 	if(debug){
@@ -211,12 +211,12 @@ rconnect(Remote *r)
 			sess->localfd[i] = p[1];
 			break;
 		}
-		runwriter(sess, smprint("mux->%s", Psrv[i]), sess->localc[i], srvfd);
-		runmuxer(sess, smprint("%s->mux", Psrv[i]), srvfd, sess->remotec, i);
+		runwriter(sess, smprint("mux->%s", Psrv[i]), debug, sess->localc[i], srvfd);
+		runmuxer(sess, smprint("%s->mux", Psrv[i]), debug, srvfd, sess->remotec, i);
 	}
 
-	rundemuxer(sess, estrdup("remote->mux"), sess->remotefd, nelem(sess->localc), sess->localc);
-	runwriter(sess, estrdup("mux->remote"), sess->remotec, sess->remotefd);
+	rundemuxer(sess, estrdup("remote->mux"), 0/*nodebug*/, sess->remotefd, nelem(sess->localc), sess->localc);
+	runwriter(sess, estrdup("mux->remote"), 0/*nodebug*/, sess->remotec, sess->remotefd);
 
 	/* Setup services on top of the session.
 	 * Note: there's a race between potential session errors from the setup
@@ -280,6 +280,7 @@ readerproc(void *v)
 	/* args: */
 		Session *sess;
 		char *name;
+		int debug;
 		int fd;
 		int wrap;
 		int nc;
@@ -288,14 +289,21 @@ readerproc(void *v)
 	void **a;
 	Emsg *e;
 	char port;
+	char *buf;
+	int nbuf;
+	Fcall fcall;
 
 	a = v;
 	sess = a[0];
 	name = a[1];
-	fd = (uintptr)a[2];
-	wrap = (uintptr)a[3];
-	nc = (uintptr)a[4];
-	c = (Channel**)&a[5];
+	debug = (uintptr)a[2];
+	fd = (uintptr)a[3];
+	wrap = (uintptr)a[4];
+	nc = (uintptr)a[5];
+	c = (Channel**)&a[6];
+
+	buf = nil;
+	nbuf = 0;
 
 	for(;;){
 		e = eget();
@@ -307,10 +315,21 @@ readerproc(void *v)
 		}
 		if((e->n = read9pmsg(fd, e->buf, sizeof(e->buf))) <= 0)
 			break;
+		if(debug){
+			if(nbuf < e->n){
+				buf = erealloc(buf, e->n);
+				nbuf = e->n;
+			}
+			memcpy(buf, e->buf, e->n);
+			convM2S((uchar*)buf, e->n, &fcall);
+			fprint(dfd, "%T %s %F\n", name, &fcall);
+		}
+/*
 		if(debug && wrap >= 0)
-			fprint(dfd, "%s: read n:%d port:%d\n", name, e->n, e->port);
+			fprint(dfd, "%T %s: read n:%d port:%d %F\n", name, e->n, e->port, &fcall);
 		else if(debug)
-			fprint(dfd, "%s: read n:%d port:%d\n", name, e->n, port);
+			fprint(dfd, "%T %s: read n:%d port:%d %F\n", name, e->n, port, &fcall);
+*/
 		if(port >= nc){
 			eput(e);
 			warning(nil, "remote: invalid destination\n");
@@ -325,17 +344,18 @@ readerproc(void *v)
 
 
 static void
-rundemuxer(Session *sess, char *name, int fd, int nc, Channel **c)
+rundemuxer(Session *sess, char *name, int debug, int fd, int nc, Channel **c)
 {
 	void **a;
 
-	a = emalloc(sizeof(void*)*5+sizeof(Channel*)*nc);
+	a = emalloc(sizeof(void*)*6+sizeof(Channel*)*nc);
 	a[0] = sess;
 	a[1] = name;
-	a[2] = (void*)(uintptr)fd;
-	a[3] = (void*)(uintptr)-1;
-	a[4] = (void*)(uintptr)nc;
-	memcpy(&a[5], c, sizeof(Channel*)*nc);
+	a[2] = (void*)(uintptr)debug;
+	a[3] = (void*)(uintptr)fd;
+	a[4] = (void*)(uintptr)-1;
+	a[5] = (void*)(uintptr)nc;
+	memcpy(&a[6], c, sizeof(Channel*)*nc);
 
 	sendul(sess->refc, 1);
 
@@ -343,17 +363,18 @@ rundemuxer(Session *sess, char *name, int fd, int nc, Channel **c)
 }
 
 static void
-runmuxer(Session *sess, char *name, int fd, Channel *c, int port)
+runmuxer(Session *sess, char *name, int debug, int fd, Channel *c, int port)
 {
 	void **a;
 
-	a = emalloc(sizeof(void*)*6);
+	a = emalloc(sizeof(void*)*7);
 	a[0] = sess;
 	a[1] = name;
-	a[2] = (void*)(uintptr)fd;
-	a[3] = (void*)(uintptr)port;
-	a[4] = (void*)(uintptr)1;
-	a[5] = c;
+	a[2] = (void*)(uintptr)debug;
+	a[3] = (void*)(uintptr)fd;
+	a[4] = (void*)(uintptr)port;
+	a[5] = (void*)(uintptr)1;
+	a[6] = c;
 
 	sendul(sess->refc, 1);
 
@@ -366,24 +387,40 @@ writerproc(void *v)
 	/* args: */
 		Session *sess;
 		char *name;
+		int debug;
 		int fd;
 		Channel *c;
 	/* end of args */
 	void **a;
 	Emsg *e;
+	Fcall fcall;
+	char *buf;
+	int nbuf;
 
 	a = v;
 	sess = a[0];
 	name = a[1];
-	fd = (uintptr)a[2];
-	c = a[3];
+	debug = (uintptr)a[2];
+	fd = (uintptr)a[3];
+	c = a[4];
 	free(a);
+
+	nbuf = 0;
+	buf = nil;
 
 	for(;;){
 		if((e = srecvp(sess, c)) == nil)
 			break;
-		if(debug)
-			fprint(dfd, "%s: write n:%d port:%d\n", name, e->n, e->port);
+		if(debug){
+			if(nbuf < e->n) {
+				buf = erealloc(buf, e->n);
+				nbuf = e->n;
+			}
+			memcpy(buf, e->buf, e->n);
+			convM2S((uchar*)buf, e->n, &fcall);
+			fprint(dfd, "%T %s %F\n", name, &fcall);
+			/*fprint(dfd, "%T %s: write n:%d port:%d %F\n", name, e->n, e->port, &fcall);*/
+		}
 		if(e->port >= 0 && write(fd, &e->port, 1) != 1)
 			break;
 		if(write(fd, e->buf, e->n) != e->n)
@@ -396,15 +433,16 @@ writerproc(void *v)
 }
 
 static void
-runwriter(Session *sess, char *name, Channel *c, int fd)
+runwriter(Session *sess, char *name, int debug, Channel *c, int fd)
 {
 	void **a;
 
-	a = emalloc(sizeof(void*)*4);
+	a = emalloc(sizeof(void*)*5);
 	a[0] = sess;
 	a[1] = name;
-	a[2] = (void*)(uintptr)fd;
-	a[3] = c;
+	a[2] = (void*)(uintptr)debug;
+	a[3] = (void*)(uintptr)fd;
+	a[4] = c;
 
 	sendul(sess->refc, 1);
 	proccreate(writerproc, a, STACK*2);

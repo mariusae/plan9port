@@ -23,6 +23,7 @@ void	xfidallocthread(void*);
 void	newwindowthread(void*);
 void	plumbproc(void*);
 int	timefmt(Fmt*);
+int	timestampfmt(Fmt*);
 
 Reffont	**fontcache;
 int		nfontcache;
@@ -31,6 +32,7 @@ Reffont	*reffonts[2];
 int		snarffd = -1;
 int		mainpid;
 int		swapscrollbuttons = FALSE;
+vlong	time0;
 char		*mtpt;
 
 enum{
@@ -55,16 +57,18 @@ void waitrelaythread(void*);
 char		*menu2str[] = {
 	"win",
 	"Alt",
-	"Ldef",
+	"Diffusion",
+//	"Ldef",
 //	"Pop",
-	"Ltype",
-	"Lrefs",
-	"Lhov",
+//	"Ltype",
+//	"Lrefs",
+//	"Lhov",
 //	"Push",
 	"goinstall",
 	"gotest",
 	"Pyre",
-	"Sanity",
+	"Lint",
+	"Test",
 	"Format",
 	"Pasteurl",
 	"Today",
@@ -100,6 +104,7 @@ threadmain(int argc, char *argv[])
 	rfork(RFENVG|RFNAMEG);
 
 	ncol = -1;
+	time0 = nsec();
 
 	loadfile = nil;
 	ARGBEGIN{
@@ -187,6 +192,7 @@ threadmain(int argc, char *argv[])
 
 	quotefmtinstall();
 	fmtinstall('t', timefmt);
+	fmtinstall('T', timestampfmt);
 
 	cputype = getenv("cputype");
 	objtype = getenv("objtype");
@@ -1260,4 +1266,10 @@ timefmt(Fmt *f)
 	tm = localtime(va_arg(f->args, ulong));
 	return fmtprint(f, "%04d/%02d/%02d %02d:%02d:%02d",
 		tm->year+1900, tm->mon+1, tm->mday, tm->hour, tm->min, tm->sec);
+}
+
+int
+timestampfmt(Fmt *f)
+{
+	return fmtprint(f, "%08d", (nsec() - time0)/1000000);
 }
