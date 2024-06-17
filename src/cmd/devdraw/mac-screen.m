@@ -625,7 +625,7 @@ rpc_resizewindow(Client *c, Rectangle r)
 	else
 		return;
 
-	[self scrollmouse:b by:s];
+	[self scrollmouse:b by:(NSInteger)ceil(s)];
 }
 
 - (void)keyDown:(NSEvent*)e
