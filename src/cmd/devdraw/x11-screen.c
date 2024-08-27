@@ -410,7 +410,7 @@ runxevent(XEvent *xev)
 		shift = 0;
 		if(_x.kstate & ShiftMask)
 			shift = 5;
-		gfx_mousetrack(w->client, m.xy.x, m.xy.y, (m.buttons|_x.kbuttons)<<shift, m.msec);
+		gfx_mousetrack(w->client, m.xy.x, m.xy.y, (m.buttons|_x.kbuttons)<<shift, 0, m.msec);
 		break;
 
 	case KeyRelease:
@@ -478,7 +478,7 @@ runxevent(XEvent *xev)
 					_x.kbuttons |= 4;
 				if(c & ShiftMask)
 					shift = 5;
-				gfx_mousetrack(w->client, m.xy.x, m.xy.y, (m.buttons|_x.kbuttons)<<shift, m.msec);
+				gfx_mousetrack(w->client, m.xy.x, m.xy.y, (m.buttons|_x.kbuttons)<<shift, 0, m.msec);
 			}
 			modp = 0;
 		}
