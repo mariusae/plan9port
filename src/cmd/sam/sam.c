@@ -18,6 +18,7 @@ List	tempfile = { 'p' };
 int	quitok = TRUE;
 int	downloaded;
 int	dflag;
+int	fflag;
 int	Rflag;
 char	*machine;
 char	*home;
@@ -52,6 +53,9 @@ main(int _argc, char **_argv)
 	ARGBEGIN{
 	case 'd':
 		dflag++;
+		break;
+	case 'f':
+		fflag++;
 		break;
 	case 'r':
 		machine = EARGF(usage());
@@ -91,7 +95,7 @@ main(int _argc, char **_argv)
 	if(home == 0)
 		home = "/";
 	if(dflag)
-		terminit();  /* Initialize terminal mode if stdin is a tty */
+		terminit(fflag);  /* Initialize terminal mode if stdin is a tty */
 	else
 		startup(machine, Rflag, termargs, (char**)argv);
 	notify(notifyf);

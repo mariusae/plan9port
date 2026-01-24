@@ -316,9 +316,10 @@ termcleanup(void)
 /*
  * Initialize terminal mode.
  * Set terminal to non-canonical mode so ESC is detected immediately.
+ * If startbuf is true, start directly in buffer mode.
  */
 void
-terminit(void)
+terminit(int startbuf)
 {
 	if(!isatty(0)){
 		termmode = 0;
@@ -345,6 +346,9 @@ terminit(void)
 
 	signal(SIGWINCH, sigwinch_handler);
 	atexit(termcleanup);
+
+	if(startbuf)
+		enter_bufmode();
 }
 
 /* Queue management */
