@@ -98,6 +98,8 @@ static int linedone = 0; /* line is complete, return chars from linebuf */
 #define KEY_ALT_BS	0x109  /* Alt/Option + Backspace */
 #define KEY_ALT_C	0x10a  /* Alt/Option + C - copy */
 #define KEY_ALT_V	0x10b  /* Alt/Option + V - page up (Meta-V) */
+#define KEY_ALT_X	0x10c  /* Alt/Option + X - cut to clipboard */
+#define KEY_PASTE	0x10d  /* Bracketed paste start */
 
 /* Forward declarations */
 static void enter_bufmode(void);
@@ -126,6 +128,7 @@ static int charwidth(Rune ch, int col);
 static int count_visual_rows(Posn from, Posn to);
 static void save_file_state(File *f);
 static void restore_file_state(File *f);
+static int read_bracketed_paste(Rune **bufp);
 
 /* Output buffer for terminal */
 static char outbuf[16384];
@@ -240,6 +243,9 @@ enter_bufmode(void)
 	/* Set cursor to non-blinking block (DECSCUSR) */
 	term_puts(CSI "2 q");
 
+	/* Enable bracketed paste mode */
+	term_puts(CSI "?2004h");
+
 	term_flush();
 	term_raw = 1;
 	viewmode = ModeBuf;
@@ -280,6 +286,9 @@ exit_bufmode(void)
 
 	/* Restore default cursor style */
 	term_puts(CSI "0 q");
+
+	/* Disable bracketed paste mode */
+	term_puts(CSI "?2004l");
 
 	/* Switch back to main screen (restores previous content) */
 	term_puts(CSI "?1049l");
@@ -548,6 +557,10 @@ term_readkey(void)
 	if(c == 'v')
 		return KEY_ALT_V;
 
+	/* Alt/Option + X - cut to clipboard */
+	if(c == 'x')
+		return KEY_ALT_X;
+
 	if(c == '['){
 		c = term_readchar();
 		if(c < 0)
@@ -574,6 +587,7 @@ term_readkey(void)
 				case 4: return KEY_END;
 				case 5: return KEY_PGUP;
 				case 6: return KEY_PGDN;
+				case 200: return KEY_PASTE;  /* Bracketed paste start */
 				}
 			}
 		}
@@ -590,6 +604,141 @@ term_readkey(void)
 
 	/* Unrecognized escape sequence - ignore and get next key */
 	return term_readkey();
+}
+
+/*
+ * Read bracketed paste content until ESC[201~
+ * Returns number of Runes read, allocates buffer at *bufp
+ * Caller must free the buffer
+ */
+static int
+read_bracketed_paste(Rune **bufp)
+{
+	int bufsize = 1024;
+	int n = 0;
+	Rune *buf;
+	int c;
+	int escape_state = 0;  /* 0=normal, 1=ESC, 2=ESC[, 3=ESC[2, 4=ESC[20, 5=ESC[201 */
+
+	buf = emalloc(bufsize * sizeof(Rune));
+
+	while((c = term_readchar()) >= 0){
+		/* Check for ESC[201~ terminator */
+		switch(escape_state){
+		case 0:
+			if(c == 27) { escape_state = 1; continue; }
+			break;
+		case 1:
+			if(c == '[') { escape_state = 2; continue; }
+			/* Not a sequence, output the ESC we skipped */
+			if(n + 1 >= bufsize){
+				bufsize *= 2;
+				buf = erealloc(buf, bufsize * sizeof(Rune));
+			}
+			buf[n++] = 27;
+			escape_state = 0;
+			break;
+		case 2:
+			if(c == '2') { escape_state = 3; continue; }
+			/* Not our sequence, output ESC[ */
+			if(n + 2 >= bufsize){
+				bufsize *= 2;
+				buf = erealloc(buf, bufsize * sizeof(Rune));
+			}
+			buf[n++] = 27;
+			buf[n++] = '[';
+			escape_state = 0;
+			break;
+		case 3:
+			if(c == '0') { escape_state = 4; continue; }
+			if(n + 3 >= bufsize){
+				bufsize *= 2;
+				buf = erealloc(buf, bufsize * sizeof(Rune));
+			}
+			buf[n++] = 27;
+			buf[n++] = '[';
+			buf[n++] = '2';
+			escape_state = 0;
+			break;
+		case 4:
+			if(c == '1') { escape_state = 5; continue; }
+			if(n + 4 >= bufsize){
+				bufsize *= 2;
+				buf = erealloc(buf, bufsize * sizeof(Rune));
+			}
+			buf[n++] = 27;
+			buf[n++] = '[';
+			buf[n++] = '2';
+			buf[n++] = '0';
+			escape_state = 0;
+			break;
+		case 5:
+			if(c == '~'){
+				/* Found ESC[201~ - end of paste */
+				*bufp = buf;
+				return n;
+			}
+			if(n + 5 >= bufsize){
+				bufsize *= 2;
+				buf = erealloc(buf, bufsize * sizeof(Rune));
+			}
+			buf[n++] = 27;
+			buf[n++] = '[';
+			buf[n++] = '2';
+			buf[n++] = '0';
+			buf[n++] = '1';
+			escape_state = 0;
+			break;
+		}
+
+		/* Handle UTF-8 decoding */
+		if((c & 0x80) == 0){
+			/* ASCII */
+			if(n >= bufsize){
+				bufsize *= 2;
+				buf = erealloc(buf, bufsize * sizeof(Rune));
+			}
+			buf[n++] = c;
+		}else if((c & 0xe0) == 0xc0){
+			/* 2-byte UTF-8 */
+			int c2 = term_readchar();
+			if(c2 >= 0 && (c2 & 0xc0) == 0x80){
+				if(n >= bufsize){
+					bufsize *= 2;
+					buf = erealloc(buf, bufsize * sizeof(Rune));
+				}
+				buf[n++] = ((c & 0x1f) << 6) | (c2 & 0x3f);
+			}
+		}else if((c & 0xf0) == 0xe0){
+			/* 3-byte UTF-8 */
+			int c2 = term_readchar();
+			int c3 = term_readchar();
+			if(c2 >= 0 && c3 >= 0 && (c2 & 0xc0) == 0x80 && (c3 & 0xc0) == 0x80){
+				if(n >= bufsize){
+					bufsize *= 2;
+					buf = erealloc(buf, bufsize * sizeof(Rune));
+				}
+				buf[n++] = ((c & 0x0f) << 12) | ((c2 & 0x3f) << 6) | (c3 & 0x3f);
+			}
+		}else if((c & 0xf8) == 0xf0){
+			/* 4-byte UTF-8 */
+			int c2 = term_readchar();
+			int c3 = term_readchar();
+			int c4 = term_readchar();
+			if(c2 >= 0 && c3 >= 0 && c4 >= 0 &&
+			   (c2 & 0xc0) == 0x80 && (c3 & 0xc0) == 0x80 && (c4 & 0xc0) == 0x80){
+				if(n >= bufsize){
+					bufsize *= 2;
+					buf = erealloc(buf, bufsize * sizeof(Rune));
+				}
+				buf[n++] = ((c & 0x07) << 18) | ((c2 & 0x3f) << 12) |
+				           ((c3 & 0x3f) << 6) | (c4 & 0x3f);
+			}
+		}
+	}
+
+	*bufp = buf;
+	return n;
 }
 
 static Posn
@@ -1381,6 +1530,54 @@ handle_bufkey(int key)
 			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
 		break;
 
+	case KEY_ALT_X:  /* Alt+X - cut to system clipboard */
+		if(curfile->dot.r.p1 != curfile->dot.r.p2){
+			/* Copy to internal clipboard and system clipboard */
+			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
+			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
+			/* Delete the selection */
+			logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
+			if(fileupdate(curfile, FALSE, FALSE))
+				seq++;
+			buf_cursor = curfile->dot.r.p1;
+			curfile->dot.r.p2 = curfile->dot.r.p1;
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
+		break;
+
+	case KEY_PASTE:  /* Bracketed paste from system clipboard */
+		{
+			Rune *paste_buf;
+			int paste_len;
+			Posn p0;
+
+			paste_len = read_bracketed_paste(&paste_buf);
+			if(paste_len > 0){
+				/* Delete selection first if any */
+				if(curfile->dot.r.p1 != curfile->dot.r.p2){
+					p0 = curfile->dot.r.p1;
+					logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
+					if(fileupdate(curfile, FALSE, FALSE))
+						seq++;
+				}else{
+					p0 = buf_cursor;
+				}
+
+				/* Insert pasted content */
+				loginsert(curfile, p0, paste_buf, paste_len);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
+
+				buf_cursor = p0 + paste_len;
+				curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+				mark_mode = 0;
+				needs_redraw = 1;
+			}
+			free(paste_buf);
+		}
+		break;
+
 	case KEY_DEL:  /* Delete key - delete char after cursor or selection */
 		{
 			Posn p0, p1;
@@ -1549,9 +1746,6 @@ handle_bufkey(int key)
 			curfile->dot.r.p1 = mark_pos;
 			curfile->dot.r.p2 = buf_cursor;
 		}
-		/* Sync selection to system clipboard */
-		if(curfile->dot.r.p1 != curfile->dot.r.p2)
-			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
 	}
 
 	if(buf_cursor < 0)
@@ -1797,9 +1991,6 @@ handle_mouse(void)
 					curfile->dot.r.p2 = mouse_sel_start;
 				}
 				buf_cursor = p;
-				/* Sync selection to system clipboard */
-				if(curfile->dot.r.p1 != curfile->dot.r.p2)
-					copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
 			}
 		}
 		needs_redraw = 1;
