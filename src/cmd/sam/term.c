@@ -13,10 +13,10 @@
 /* Include system headers before plan9port headers to avoid conflicts */
 
 /*
- * Enable POSIX and X/Open features for wcwidth().
- * Plan9port headers may redefine this, so we set it early.
+ * Enable GNU/POSIX features for wcwidth() and SIGWINCH.
+ * Must be defined before any system headers are included.
  */
-#define _XOPEN_SOURCE 700
+#define _GNU_SOURCE
 
 #include <stdio.h>
 #include <sys/ioctl.h>
