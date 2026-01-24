@@ -2,12 +2,12 @@
  * Terminal mode interface for sam -d flag
  *
  * When running sam -d with a tty, provides enhanced terminal features:
- * - Starts in command mode (like regular -d)
- * - Press ESC to toggle to buffer mode (view file content)
+ * - Starts in normal command mode (exactly like regular -d)
+ * - Press ESC to toggle to full-screen buffer mode (view file content)
  * - Buffer mode supports emacs-like navigation and mouse selection
- * - Press ESC again to return to command mode
+ * - Press ESC again to return to command mode, restoring terminal state
  *
- * If stdin is not a tty, behaves like regular -d mode.
+ * If stdin is not a tty, behaves exactly like regular -d mode.
  */
 
 /* Include system headers before plan9port headers to avoid conflicts */
@@ -17,31 +17,30 @@
 
 #include "sam.h"
 
-/* Global: terminal mode active (exported to sam.h) */
+/* Global: terminal mode available (exported to sam.h) */
 int	termmode = 0;
 
 /* Terminal mode states */
 enum {
-	ModeCmd = 0,	/* command mode - entering sam commands */
-	ModeBuf = 1,	/* buffer mode - viewing file content */
+	ModeCmd = 0,	/* command mode - normal terminal, like regular -d */
+	ModeBuf = 1,	/* buffer mode - full screen view */
 };
 
 /* Terminal state */
 static struct termios orig_termios;
-static int viewmode = ModeCmd;	/* current view: command or buffer */
+static int viewmode = ModeCmd;
 static int term_rows = 24;
 static int term_cols = 80;
 static int term_raw = 0;
-static int term_initialized = 0;
-static Posn buf_origin = 0;	/* first char position shown in buffer view */
-static Posn buf_cursor = 0;	/* cursor position in buffer view */
+static Posn buf_origin = 0;
+static Posn buf_cursor = 0;
 static int mouse_enabled = 0;
 static int mouse_selecting = 0;
 static Posn mouse_sel_start = 0;
 static Posn mouse_sel_end = 0;
 static int needs_redraw = 1;
 
-/* Command line buffer for cmd mode - ring buffer of characters to return */
+/* Input queue for returning characters to sam */
 static Rune inputqueue[4096];
 static int inputhead = 0;
 static int inputtail = 0;
@@ -64,8 +63,8 @@ static int inputtail = 0;
 #define KEY_MOUSE	0x200
 
 /* Forward declarations */
-static void term_setraw(void);
-static void term_restore(void);
+static void enter_bufmode(void);
+static void exit_bufmode(void);
 static void term_getsize(void);
 static void term_clear(void);
 static void term_goto(int row, int col);
@@ -74,9 +73,7 @@ static void term_puts(char *s);
 static void term_flush(void);
 static void term_status(char *msg);
 static int term_readkey(void);
-static void draw_cmdmode(void);
 static void draw_bufmode(void);
-static int handle_cmdkey(int key);
 static void handle_bufkey(int key);
 static void handle_mouse(void);
 static Posn file_linestart(File *f, Posn p);
@@ -87,6 +84,7 @@ static void buf_scrollto(Posn p);
 static void queue_char(Rune c);
 static int dequeue_char(void);
 static int queue_empty(void);
+static void queue_string(char *s);
 
 /* Output buffer for terminal */
 static char outbuf[16384];
@@ -123,52 +121,6 @@ term_flush(void)
 		write(1, outbuf, outbufn);
 		outbufn = 0;
 	}
-}
-
-static void
-term_setraw(void)
-{
-	struct termios raw;
-
-	if(term_raw)
-		return;
-
-	if(tcgetattr(0, &orig_termios) < 0)
-		return;
-
-	raw = orig_termios;
-	raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
-	raw.c_oflag &= ~(OPOST);
-	raw.c_cflag |= (CS8);
-	raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-	raw.c_cc[VMIN] = 1;
-	raw.c_cc[VTIME] = 0;
-
-	if(tcsetattr(0, TCSAFLUSH, &raw) < 0)
-		return;
-
-	term_raw = 1;
-}
-
-static void
-term_restore(void)
-{
-	if(!term_raw)
-		return;
-
-	/* Disable mouse */
-	if(mouse_enabled){
-		term_puts(CSI "?1000l");
-		term_puts(CSI "?1006l");
-		mouse_enabled = 0;
-	}
-
-	/* Show cursor */
-	term_puts(CSI "?25h");
-	term_flush();
-
-	tcsetattr(0, TCSAFLUSH, &orig_termios);
-	term_raw = 0;
 }
 
 static void
@@ -212,10 +164,9 @@ term_status(char *msg)
 	if(len > term_cols)
 		len = term_cols;
 	term_write(msg, len);
-	/* Pad with spaces */
 	for(i = len; i < term_cols; i++)
 		term_puts(" ");
-	term_puts(CSI "0m");  /* reset */
+	term_puts(CSI "0m");
 }
 
 static void
@@ -223,58 +174,110 @@ sigwinch_handler(int sig)
 {
 	USED(sig);
 	term_getsize();
+	if(viewmode == ModeBuf)
+		needs_redraw = 1;
+}
+
+/*
+ * Enter buffer mode: switch to alternate screen, raw mode
+ */
+static void
+enter_bufmode(void)
+{
+	struct termios raw;
+
+	if(term_raw)
+		return;
+
+	term_getsize();
+
+	/* Save terminal state and switch to alternate screen */
+	term_puts(CSI "?1049h");  /* Save cursor & switch to alternate screen */
+
+	/* Enter raw mode */
+	if(tcgetattr(0, &orig_termios) == 0){
+		raw = orig_termios;
+		raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+		raw.c_oflag &= ~(OPOST);
+		raw.c_cflag |= (CS8);
+		raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+		raw.c_cc[VMIN] = 1;
+		raw.c_cc[VTIME] = 0;
+		tcsetattr(0, TCSAFLUSH, &raw);
+	}
+
+	/* Enable mouse tracking */
+	term_puts(CSI "?1000h");
+	term_puts(CSI "?1006h");
+	mouse_enabled = 1;
+
+	term_flush();
+	term_raw = 1;
+	viewmode = ModeBuf;
 	needs_redraw = 1;
+
+	/* Position cursor at current dot */
+	if(curfile)
+		buf_cursor = curfile->dot.r.p1;
+	buf_origin = 0;
+	if(curfile && buf_cursor > 0)
+		buf_origin = file_linestart(curfile, buf_cursor);
+}
+
+/*
+ * Exit buffer mode: restore terminal to normal state
+ */
+static void
+exit_bufmode(void)
+{
+	if(!term_raw)
+		return;
+
+	/* Disable mouse */
+	if(mouse_enabled){
+		term_puts(CSI "?1000l");
+		term_puts(CSI "?1006l");
+		mouse_enabled = 0;
+	}
+
+	/* Switch back to main screen (restores previous content) */
+	term_puts(CSI "?1049l");
+	term_flush();
+
+	/* Restore terminal settings */
+	tcsetattr(0, TCSAFLUSH, &orig_termios);
+	term_raw = 0;
+	viewmode = ModeCmd;
 }
 
 void
 termcleanup(void)
 {
-	if(term_initialized){
-		term_restore();
-		term_clear();
-		term_flush();
-	}
+	if(term_raw)
+		exit_bufmode();
 }
 
 /*
- * Initialize terminal mode if stdin is a tty.
- * Called from main() when -d flag is set.
+ * Initialize terminal mode.
+ * Just check if stdin is a tty - don't change terminal settings.
  */
 void
 terminit(void)
 {
-	/* Check if stdin is a tty */
 	if(!isatty(0)){
 		termmode = 0;
 		return;
 	}
 
 	termmode = 1;
-	signal(SIGWINCH, sigwinch_handler);
-
-	term_getsize();
-	term_setraw();
-
-	/* Enable mouse tracking (SGR extended mode) */
-	term_puts(CSI "?1000h");  /* Enable mouse click tracking */
-	term_puts(CSI "?1006h");  /* Enable SGR extended mode */
-	mouse_enabled = 1;
-
-	/* Show cursor */
-	term_puts(CSI "?25h");
-
-	term_flush();
-
-	/* Start in command mode */
 	viewmode = ModeCmd;
 	inputhead = inputtail = 0;
-	term_initialized = 1;
 
-	/* Register cleanup */
+	signal(SIGWINCH, sigwinch_handler);
 	atexit(termcleanup);
 }
 
-/* Queue management for returning characters to sam */
+/* Queue management */
 static void
 queue_char(Rune c)
 {
@@ -309,10 +312,7 @@ queue_string(char *s)
 		queue_char(*s++);
 }
 
-/*
- * Read a key from the terminal.
- * Returns the key code, or special codes for function keys.
- */
+/* Read a key in raw mode */
 static int pending_char = -1;
 
 static int
@@ -342,14 +342,13 @@ term_readkey(void)
 	/* Escape sequence */
 	c = term_readchar();
 	if(c < 0 || c == 27)
-		return KEY_ESC;  /* Just escape, or ESC ESC */
+		return KEY_ESC;
 
 	if(c == '['){
 		c = term_readchar();
 		if(c < 0)
 			return KEY_ESC;
 
-		/* CSI sequences */
 		if(c == 'A') return KEY_UP;
 		if(c == 'B') return KEY_DOWN;
 		if(c == 'C') return KEY_RIGHT;
@@ -357,7 +356,6 @@ term_readkey(void)
 		if(c == 'H') return KEY_HOME;
 		if(c == 'F') return KEY_END;
 
-		/* CSI with number */
 		if(c >= '0' && c <= '9'){
 			int num = c - '0';
 			c = term_readchar();
@@ -376,10 +374,8 @@ term_readkey(void)
 			}
 		}
 
-		/* Mouse events (SGR mode: ESC [ < ... ) */
-		if(c == '<'){
+		if(c == '<')
 			return KEY_MOUSE;
-		}
 	}
 
 	if(c == 'O'){
@@ -388,7 +384,6 @@ term_readkey(void)
 		if(c == 'F') return KEY_END;
 	}
 
-	/* Unknown escape sequence - ignore */
 	return -1;
 }
 
@@ -413,7 +408,7 @@ file_nextline(File *f, Posn p)
 {
 	p = file_lineend(f, p);
 	if(p < f->b.nc)
-		p++;  /* skip newline */
+		p++;
 	return p;
 }
 
@@ -422,7 +417,7 @@ file_prevline(File *f, Posn p)
 {
 	p = file_linestart(f, p);
 	if(p > 0)
-		p--;  /* back over newline */
+		p--;
 	p = file_linestart(f, p);
 	return p;
 }
@@ -436,8 +431,6 @@ buf_scrollto(Posn p)
 	if(!curfile)
 		return;
 
-	/* Ensure p is visible */
-	/* Count lines from buf_origin to p */
 	lines = 0;
 	pos = buf_origin;
 
@@ -450,103 +443,13 @@ buf_scrollto(Posn p)
 	}
 
 	if(p < buf_origin){
-		/* Scroll up */
 		buf_origin = file_linestart(curfile, p);
 	}else if(lines >= term_rows - 2){
-		/* Scroll down - put cursor in middle */
 		int i;
 		buf_origin = file_linestart(curfile, p);
 		for(i = 0; i < (term_rows - 2) / 2 && buf_origin > 0; i++)
 			buf_origin = file_prevline(curfile, buf_origin);
 	}
-}
-
-static void
-draw_cmdmode(void)
-{
-	char status[256];
-	char *fname;
-	int row;
-	Posn p;
-	Rune ch;
-
-	term_clear();
-
-	/* Show recent output from cmd buffer if available */
-	if(cmd && cmd->b.nc > 0){
-		/* Find start position - show last N lines that fit */
-		Posn start = cmd->b.nc;
-		int maxlines = term_rows - 3;
-		int lines = 0;
-
-		while(start > 0 && lines < maxlines){
-			start--;
-			if(filereadc(cmd, start) == '\n')
-				lines++;
-		}
-		if(start > 0)
-			start++;  /* Skip the newline we stopped at */
-
-		/* Draw from start */
-		p = start;
-		row = 0;
-		while(p < cmd->b.nc && row < term_rows - 2){
-			term_goto(row, 0);
-			term_puts(CSI "K");  /* clear line */
-
-			int col = 0;
-			while(p < cmd->b.nc && col < term_cols){
-				ch = filereadc(cmd, p);
-				if(ch == '\n'){
-					p++;
-					break;
-				}else if(ch == '\t'){
-					int spaces = 8 - (col % 8);
-					while(spaces-- > 0 && col < term_cols){
-						term_puts(" ");
-						col++;
-					}
-				}else if(ch < 32){
-					char ctl[4];
-					snprint(ctl, sizeof ctl, "^%c", (int)(ch + '@'));
-					term_puts(ctl);
-					col += 2;
-				}else{
-					char buf[UTFmax + 1];
-					int n = runetochar(buf, &ch);
-					buf[n] = 0;
-					term_puts(buf);
-					col++;
-				}
-				p++;
-			}
-			/* Skip rest of long line */
-			while(p < cmd->b.nc && filereadc(cmd, p) != '\n')
-				p++;
-			if(p < cmd->b.nc)
-				p++;
-			row++;
-		}
-	}
-
-	/* Draw status bar at bottom */
-	if(curfile && curfile->name.s[0]){
-		fname = Strtoc(&curfile->name);
-		snprint(status, sizeof status, " SAM [Cmd] %s%s  Dot:#%ld,#%ld  ESC=buffer ",
-			curfile->mod ? "*" : "", fname,
-			curfile->dot.r.p1, curfile->dot.r.p2);
-		free(fname);
-	}else{
-		snprint(status, sizeof status, " SAM [Cmd]  ESC=buffer mode ");
-	}
-	term_status(status);
-
-	/* Position cursor at bottom for command input */
-	term_goto(term_rows - 2, 0);
-	term_puts(CSI "K");
-	term_puts(":");
-
-	term_flush();
 }
 
 static void
@@ -560,13 +463,12 @@ draw_bufmode(void)
 
 	if(!curfile){
 		term_clear();
-		term_status(" SAM [Buffer] No file  ESC=command mode ");
+		term_status(" SAM [Buffer] No file  ESC=return ");
 		term_flush();
 		return;
 	}
 
 	buf_scrollto(buf_cursor);
-
 	term_clear();
 
 	/* Draw file content */
@@ -578,10 +480,8 @@ draw_bufmode(void)
 		while(p < curfile->b.nc && col < term_cols){
 			ch = filereadc(curfile, p);
 
-			/* Highlight selection */
-			if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2){
-				term_puts(CSI "7m");  /* reverse */
-			}
+			if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2)
+				term_puts(CSI "7m");
 
 			if(ch == '\n'){
 				if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2)
@@ -613,26 +513,25 @@ draw_bufmode(void)
 			p++;
 		}
 
-		/* Skip rest of long line */
 		while(p < curfile->b.nc && filereadc(curfile, p) != '\n')
 			p++;
 		if(p < curfile->b.nc)
-			p++;  /* skip newline */
+			p++;
 	}
 
-	/* Draw status bar */
+	/* Status bar */
 	if(curfile->name.s[0]){
 		fname = Strtoc(&curfile->name);
-		snprint(status, sizeof status, " SAM [Buf] %s%s  #%ld  Dot:#%ld,#%ld  ESC=cmd ",
+		snprint(status, sizeof status, " %s%s  #%ld  Dot:#%ld,#%ld  ESC=return ",
 			curfile->mod ? "*" : "", fname,
 			buf_cursor, curfile->dot.r.p1, curfile->dot.r.p2);
 		free(fname);
 	}else{
-		snprint(status, sizeof status, " SAM [Buf] (unnamed)  #%ld  ESC=cmd ", buf_cursor);
+		snprint(status, sizeof status, " (unnamed)  #%ld  ESC=return ", buf_cursor);
 	}
 	term_status(status);
 
-	/* Position cursor - find row/col for buf_cursor */
+	/* Position cursor */
 	p = buf_origin;
 	row = 0;
 	col = 0;
@@ -658,33 +557,8 @@ draw_bufmode(void)
 void
 termdraw(void)
 {
-	if(!term_raw)
-		return;
-
-	if(viewmode == ModeCmd)
-		draw_cmdmode();
-	else
+	if(viewmode == ModeBuf && term_raw)
 		draw_bufmode();
-
-	needs_redraw = 0;
-}
-
-/*
- * Handle key in command mode.
- * Returns 1 if key was consumed (ESC to switch mode), 0 otherwise.
- */
-static int
-handle_cmdkey(int key)
-{
-	if(key == KEY_ESC){
-		/* Switch to buffer mode */
-		viewmode = ModeBuf;
-		if(curfile)
-			buf_cursor = curfile->dot.r.p1;
-		needs_redraw = 1;
-		return 1;  /* consumed */
-	}
-	return 0;  /* not consumed - pass through */
 }
 
 static void
@@ -694,30 +568,25 @@ handle_bufkey(int key)
 	Posn tmp;
 
 	if(!curfile){
-		if(key == KEY_ESC){
-			viewmode = ModeCmd;
-			needs_redraw = 1;
-		}
+		if(key == KEY_ESC)
+			exit_bufmode();
 		return;
 	}
 
 	switch(key){
 	case KEY_ESC:
-		/* Switch to command mode, update dot */
-		viewmode = ModeCmd;
 		curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
-		needs_redraw = 1;
+		exit_bufmode();
 		break;
 
-	/* Emacs-style navigation */
 	case KEY_UP:
-	case 16:  /* Ctrl-P - previous line */
+	case 16:  /* Ctrl-P */
 		buf_cursor = file_prevline(curfile, buf_cursor);
 		needs_redraw = 1;
 		break;
 
 	case KEY_DOWN:
-	case 14:  /* Ctrl-N - next line */
+	case 14:  /* Ctrl-N */
 		buf_cursor = file_nextline(curfile, buf_cursor);
 		if(buf_cursor > curfile->b.nc)
 			buf_cursor = curfile->b.nc;
@@ -725,33 +594,32 @@ handle_bufkey(int key)
 		break;
 
 	case KEY_LEFT:
-	case 2:  /* Ctrl-B - backward char */
+	case 2:  /* Ctrl-B */
 		if(buf_cursor > 0)
 			buf_cursor--;
 		needs_redraw = 1;
 		break;
 
 	case KEY_RIGHT:
-	case 6:  /* Ctrl-F - forward char */
+	case 6:  /* Ctrl-F */
 		if(buf_cursor < curfile->b.nc)
 			buf_cursor++;
 		needs_redraw = 1;
 		break;
 
 	case KEY_HOME:
-	case 1:  /* Ctrl-A - beginning of line */
+	case 1:  /* Ctrl-A */
 		buf_cursor = file_linestart(curfile, buf_cursor);
 		needs_redraw = 1;
 		break;
 
 	case KEY_END:
-	case 5:  /* Ctrl-E - end of line */
+	case 5:  /* Ctrl-E */
 		buf_cursor = file_lineend(curfile, buf_cursor);
 		needs_redraw = 1;
 		break;
 
 	case KEY_PGUP:
-		/* Page up */
 		for(i = 0; i < term_rows - 2; i++){
 			Posn prev = file_prevline(curfile, buf_cursor);
 			if(prev == buf_cursor)
@@ -762,7 +630,7 @@ handle_bufkey(int key)
 		break;
 
 	case KEY_PGDN:
-	case 22:  /* Ctrl-V - page down */
+	case 22:  /* Ctrl-V */
 		for(i = 0; i < term_rows - 2; i++){
 			buf_cursor = file_nextline(curfile, buf_cursor);
 			if(buf_cursor >= curfile->b.nc){
@@ -773,7 +641,7 @@ handle_bufkey(int key)
 		needs_redraw = 1;
 		break;
 
-	case 21:  /* Ctrl-U - page up (half screen) */
+	case 21:  /* Ctrl-U */
 		for(i = 0; i < (term_rows - 2) / 2; i++){
 			Posn prev = file_prevline(curfile, buf_cursor);
 			if(prev == buf_cursor)
@@ -783,14 +651,11 @@ handle_bufkey(int key)
 		needs_redraw = 1;
 		break;
 
-	/* Selection */
-	case ' ':  /* Space - set mark / toggle selection mode */
+	case ' ':
 		if(curfile->dot.r.p1 == curfile->dot.r.p2){
-			/* Start selection at cursor */
 			curfile->dot.r.p1 = buf_cursor;
 			curfile->dot.r.p2 = buf_cursor;
 		}else{
-			/* Extend selection to cursor */
 			if(buf_cursor < curfile->dot.r.p1)
 				curfile->dot.r.p1 = buf_cursor;
 			else
@@ -799,25 +664,22 @@ handle_bufkey(int key)
 		needs_redraw = 1;
 		break;
 
-	case 7:  /* Ctrl-G - deselect */
+	case 7:  /* Ctrl-G */
 		curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
 		needs_redraw = 1;
 		break;
 
-	case 23:  /* Ctrl-W - copy selection to snarf buffer */
-		if(curfile->dot.r.p1 != curfile->dot.r.p2){
+	case 23:  /* Ctrl-W */
+		if(curfile->dot.r.p1 != curfile->dot.r.p2)
 			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
-		}
 		break;
 
-	case 25:  /* Ctrl-Y - yank (paste) at cursor */
+	case 25:  /* Ctrl-Y */
 		if(snarfbuf.nc > 0){
 			Posn l, m;
-			/* Queue a paste command */
 			char cmd[64];
 			snprint(cmd, sizeof cmd, "#%ld,#%lda/", buf_cursor, buf_cursor);
 			queue_string(cmd);
-			/* Read snarf buffer and queue it */
 			for(l = 0; l < snarfbuf.nc; l += m){
 				m = snarfbuf.nc - l;
 				if(m > BLOCKSIZE)
@@ -830,12 +692,11 @@ handle_bufkey(int key)
 				}
 			}
 			queue_string("/\n");
-			viewmode = ModeCmd;  /* Switch to process command */
-			needs_redraw = 1;
+			exit_bufmode();
 		}
 		break;
 
-	case 24:  /* Ctrl-X - swap point and mark */
+	case 24:  /* Ctrl-X */
 		tmp = curfile->dot.r.p1;
 		curfile->dot.r.p1 = buf_cursor;
 		buf_cursor = tmp;
@@ -851,17 +712,15 @@ handle_bufkey(int key)
 		break;
 	}
 
-	/* Keep cursor in bounds */
 	if(buf_cursor < 0)
 		buf_cursor = 0;
-	if(buf_cursor > curfile->b.nc)
+	if(curfile && buf_cursor > curfile->b.nc)
 		buf_cursor = curfile->b.nc;
 }
 
 static void
 handle_mouse(void)
 {
-	/* Parse SGR mouse event: ESC [ < Cb ; Cx ; Cy M/m */
 	int button = 0, x = 0, y = 0;
 	int c;
 	int pressed;
@@ -869,7 +728,6 @@ handle_mouse(void)
 	Posn p;
 	int row, col;
 
-	/* Read button */
 	c = term_readchar();
 	while(c >= '0' && c <= '9'){
 		button = button * 10 + (c - '0');
@@ -877,7 +735,6 @@ handle_mouse(void)
 	}
 	if(c != ';') return;
 
-	/* Read x */
 	c = term_readchar();
 	while(c >= '0' && c <= '9'){
 		x = x * 10 + (c - '0');
@@ -885,24 +742,19 @@ handle_mouse(void)
 	}
 	if(c != ';') return;
 
-	/* Read y */
 	c = term_readchar();
 	while(c >= '0' && c <= '9'){
 		y = y * 10 + (c - '0');
 		c = term_readchar();
 	}
 
-	pressed = (c == 'M');  /* 'M' = press, 'm' = release */
-
-	/* Convert to 0-indexed */
+	pressed = (c == 'M');
 	x--;
 	y--;
 
-	/* Only handle in buffer mode */
-	if(viewmode != ModeBuf || !curfile)
+	if(!curfile)
 		return;
 
-	/* Convert screen position to file position */
 	p = buf_origin;
 	row = 0;
 	col = 0;
@@ -917,7 +769,6 @@ handle_mouse(void)
 		p++;
 	}
 
-	/* Now find the column */
 	while(col < x && p < curfile->b.nc){
 		Rune ch = filereadc(curfile, p);
 		if(ch == '\n')
@@ -926,9 +777,9 @@ handle_mouse(void)
 		p++;
 	}
 
-	btn = button & 3;  /* Button number: 0=left, 1=middle, 2=right */
+	btn = button & 3;
 
-	if(btn == 0){  /* Left button */
+	if(btn == 0){
 		if(pressed){
 			mouse_selecting = 1;
 			mouse_sel_start = p;
@@ -951,14 +802,14 @@ handle_mouse(void)
 			}
 		}
 		needs_redraw = 1;
-	}else if(button == 64){  /* Scroll up */
+	}else if(button == 64){
 		int i;
 		for(i = 0; i < 3; i++){
 			if(buf_origin > 0)
 				buf_origin = file_prevline(curfile, buf_origin);
 		}
 		needs_redraw = 1;
-	}else if(button == 65){  /* Scroll down */
+	}else if(button == 65){
 		int i;
 		for(i = 0; i < 3; i++){
 			buf_origin = file_nextline(curfile, buf_origin);
@@ -971,22 +822,47 @@ handle_mouse(void)
 
 /*
  * Main input function for terminal mode.
- * Called from inputc() in cmd.c when termmode is set.
- * Returns characters one at a time to the command parser.
+ * In command mode: read normally, check for ESC to enter buffer mode.
+ * In buffer mode: handle navigation keys.
  */
 int
 terminputc(void)
 {
 	int key;
+	int n, nbuf;
+	char buf[UTFmax];
+	Rune r;
 
-	/* First return any queued characters */
+	/* Return queued characters first */
 	if(!queue_empty())
 		return dequeue_char();
 
-	/* Draw UI and get input */
+	if(viewmode == ModeCmd){
+		/* Command mode: read like normal -d mode */
+		/* But check for ESC to enter buffer mode */
+		nbuf = 0;
+		do{
+			n = read(0, buf+nbuf, 1);
+			if(n <= 0)
+				return -1;
+			nbuf += n;
+		}while(!fullrune(buf, nbuf));
+		chartorune(&r, buf);
+
+		if(r == 27){  /* ESC */
+			enter_bufmode();
+			/* Now in buffer mode - fall through to handle it */
+		}else{
+			return r;
+		}
+	}
+
+	/* Buffer mode */
 	for(;;){
-		if(needs_redraw)
-			termdraw();
+		if(needs_redraw){
+			draw_bufmode();
+			needs_redraw = 0;
+		}
 
 		key = term_readkey();
 		if(key < 0)
@@ -997,26 +873,14 @@ terminputc(void)
 			continue;
 		}
 
+		handle_bufkey(key);
+
+		/* If we exited buffer mode, check for queued chars or read next */
 		if(viewmode == ModeCmd){
-			/* In command mode, check for ESC to switch to buffer mode */
-			if(handle_cmdkey(key))
-				continue;  /* ESC was consumed, loop back */
-
-			/* Pass through other keys to sam */
-			/* Handle special keys */
-			if(key >= KEY_UP){
-				/* Arrow keys, etc - ignore in command mode */
-				continue;
-			}
-
-			/* Regular character - return it */
-			return key;
-		}else{
-			/* Buffer mode - handle navigation */
-			handle_bufkey(key);
-			/* Check if we have commands queued (e.g., from paste) */
 			if(!queue_empty())
 				return dequeue_char();
+			/* Recursively call to read next command char */
+			return terminputc();
 		}
 	}
 }
