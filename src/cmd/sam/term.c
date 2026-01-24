@@ -11,6 +11,7 @@
  */
 
 /* Include system headers before plan9port headers to avoid conflicts */
+#include <stdio.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <termios.h>
@@ -45,6 +46,16 @@ static int needs_redraw = 1;
 static int mark_mode = 0;      /* Emacs-style mark active */
 static Posn mark_pos = 0;      /* Position where mark was set */
 
+/* Per-file view state */
+#define MAX_FILE_STATES 64
+static struct {
+	File *file;
+	Posn origin;
+	Posn cursor;
+} file_states[MAX_FILE_STATES];
+static int nfile_states = 0;
+static File *last_file = nil;  /* Track file switches */
+
 /* Input queue for returning characters to sam */
 static Rune inputqueue[4096];
 static int inputhead = 0;
@@ -73,6 +84,8 @@ static int linedone = 0; /* line is complete, return chars from linebuf */
 #define KEY_DEL		0x108
 #define KEY_MOUSE	0x200
 #define KEY_ALT_BS	0x109  /* Alt/Option + Backspace */
+#define KEY_ALT_C	0x10a  /* Alt/Option + C - copy */
+#define KEY_ALT_V	0x10b  /* Alt/Option + V - page up (Meta-V) */
 
 /* Forward declarations */
 static void enter_bufmode(void);
@@ -96,6 +109,10 @@ static void queue_char(Rune c);
 static int dequeue_char(void);
 static int queue_empty(void);
 static void queue_string(char *s);
+static int charwidth(Rune ch, int col);
+static int count_visual_rows(Posn from, Posn to);
+static void save_file_state(File *f);
+static void restore_file_state(File *f);
 
 /* Output buffer for terminal */
 static char outbuf[16384];
@@ -212,12 +229,16 @@ enter_bufmode(void)
 	viewmode = ModeBuf;
 	needs_redraw = 1;
 
-	/* Position cursor at current dot */
-	if(curfile)
-		buf_cursor = curfile->dot.r.p1;
-	buf_origin = 0;
-	if(curfile && buf_cursor > 0)
-		buf_origin = file_linestart(curfile, buf_cursor);
+	/* Handle per-file view state preservation */
+	if(curfile){
+		/* Save state for previous file if switching */
+		if(last_file && last_file != curfile)
+			save_file_state(last_file);
+
+		/* Restore state for current file (or initialize from dot if new) */
+		restore_file_state(curfile);
+		last_file = curfile;
+	}
 }
 
 /*
@@ -228,6 +249,10 @@ exit_bufmode(void)
 {
 	if(!term_raw)
 		return;
+
+	/* Save current file's view state before exiting */
+	if(curfile)
+		save_file_state(curfile);
 
 	/* Disable mouse */
 	if(mouse_enabled){
@@ -325,6 +350,68 @@ queue_string(char *s)
 		queue_char(*s++);
 }
 
+/*
+ * Save view state for a file (origin and cursor positions).
+ */
+static void
+save_file_state(File *f)
+{
+	int i;
+
+	if(!f)
+		return;
+
+	/* Look for existing entry */
+	for(i = 0; i < nfile_states; i++){
+		if(file_states[i].file == f){
+			file_states[i].origin = buf_origin;
+			file_states[i].cursor = buf_cursor;
+			return;
+		}
+	}
+
+	/* Add new entry if space available */
+	if(nfile_states < MAX_FILE_STATES){
+		file_states[nfile_states].file = f;
+		file_states[nfile_states].origin = buf_origin;
+		file_states[nfile_states].cursor = buf_cursor;
+		nfile_states++;
+	}
+}
+
+/*
+ * Restore view state for a file.
+ * Returns 1 if state was found and restored, 0 otherwise.
+ */
+static void
+restore_file_state(File *f)
+{
+	int i;
+
+	if(!f)
+		return;
+
+	/* Look for existing entry */
+	for(i = 0; i < nfile_states; i++){
+		if(file_states[i].file == f){
+			buf_origin = file_states[i].origin;
+			buf_cursor = file_states[i].cursor;
+			/* Clamp to valid range */
+			if(buf_origin > f->b.nc)
+				buf_origin = f->b.nc > 0 ? file_linestart(f, f->b.nc) : 0;
+			if(buf_cursor > f->b.nc)
+				buf_cursor = f->b.nc;
+			return;
+		}
+	}
+
+	/* No saved state - initialize from dot */
+	buf_cursor = f->dot.r.p1;
+	buf_origin = 0;
+	if(buf_cursor > 0)
+		buf_origin = file_linestart(f, buf_cursor);
+}
+
 /* Read a key in raw mode */
 static int pending_char = -1;
 
@@ -390,6 +477,14 @@ term_readkey(void)
 	/* Alt/Option + Backspace */
 	if(c == 127 || c == 8)
 		return KEY_ALT_BS;
+
+	/* Alt/Option + C - copy */
+	if(c == 'c')
+		return KEY_ALT_C;
+
+	/* Alt/Option + V - paste */
+	if(c == 'v')
+		return KEY_ALT_V;
 
 	if(c == '['){
 		c = term_readchar();
@@ -470,34 +565,198 @@ file_prevline(File *f, Posn p)
 	return p;
 }
 
+/*
+ * Count the number of visual rows from position 'from' to position 'to'.
+ * Accounts for line wrapping.
+ */
+static int
+count_visual_rows(Posn from, Posn to)
+{
+	int rows = 0;
+	int col = 0;
+	Posn pos = from;
+	Rune ch;
+	int w;
+
+	while(pos < to && pos < curfile->b.nc){
+		ch = filereadc(curfile, pos);
+		if(ch == '\n'){
+			rows++;
+			col = 0;
+		}else{
+			w = charwidth(ch, col);
+			if(col + w > term_cols){
+				/* This char wraps to next row */
+				rows++;
+				col = w;  /* Char is on new row */
+			}else{
+				col += w;
+			}
+		}
+		pos++;
+	}
+	return rows;
+}
+
 static void
 buf_scrollto(Posn p)
 {
-	int lines;
-	Posn pos;
+	int visual_rows;
 
 	if(!curfile)
 		return;
 
-	lines = 0;
-	pos = buf_origin;
-
-	while(pos < p && pos < curfile->b.nc){
-		if(filereadc(curfile, pos) == '\n')
-			lines++;
-		pos++;
-		if(lines >= term_rows)
-			break;
-	}
+	/* Count visual rows from origin to cursor */
+	visual_rows = count_visual_rows(buf_origin, p);
 
 	if(p < buf_origin){
+		/* Cursor is above the screen - scroll up */
 		buf_origin = file_linestart(curfile, p);
-	}else if(lines >= term_rows){
+	}else if(visual_rows >= term_rows){
+		/* Cursor is below the screen - center it */
 		int i;
 		buf_origin = file_linestart(curfile, p);
 		for(i = 0; i < term_rows / 2 && buf_origin > 0; i++)
 			buf_origin = file_prevline(curfile, buf_origin);
 	}
+}
+
+/*
+ * Calculate the visual column width of a character.
+ */
+static int
+charwidth(Rune ch, int col)
+{
+	if(ch == '\t')
+		return 8 - (col % 8);
+	if(ch < 32)
+		return 2;  /* ^X */
+	return 1;
+}
+
+/*
+ * Convert a file position to screen (row, col) coordinates.
+ * Returns the row, sets *colp to the column.
+ * Accounts for line wrapping and tab expansion.
+ */
+static int
+pos_to_screen(Posn p, int *colp)
+{
+	int row = 0;
+	int col = 0;
+	Posn pos = buf_origin;
+	Rune ch;
+	int w;
+
+	while(pos < p && pos < curfile->b.nc && row < term_rows){
+		ch = filereadc(curfile, pos);
+		if(ch == '\n'){
+			row++;
+			col = 0;
+			pos++;
+		}else{
+			w = charwidth(ch, col);
+			if(col + w > term_cols){
+				/* This char wraps to next row */
+				row++;
+				col = 0;
+				/* Don't increment pos - reconsider this char on new row */
+			}else{
+				col += w;
+				pos++;
+			}
+		}
+	}
+
+	*colp = col;
+	return row;
+}
+
+/*
+ * Convert screen (row, col) coordinates to a file position.
+ * Accounts for line wrapping and tab expansion.
+ */
+static Posn
+screen_to_pos(int target_row, int target_col)
+{
+	int row = 0;
+	int col = 0;
+	Posn pos = buf_origin;
+	Rune ch;
+	int w;
+
+	while(pos < curfile->b.nc && row < target_row){
+		ch = filereadc(curfile, pos);
+		if(ch == '\n'){
+			row++;
+			col = 0;
+			pos++;
+		}else{
+			w = charwidth(ch, col);
+			if(col + w > term_cols){
+				/* This char wraps to next row */
+				row++;
+				col = 0;
+				/* Don't increment pos - this char belongs to new row */
+			}else{
+				col += w;
+				pos++;
+			}
+		}
+	}
+
+	/* Now find the column on the target row */
+	col = 0;
+	while(pos < curfile->b.nc && col < target_col){
+		ch = filereadc(curfile, pos);
+		if(ch == '\n')
+			break;
+		w = charwidth(ch, col);
+		if(col + w > term_cols)
+			break;  /* would wrap to next row */
+		if(col + w > target_col)
+			break;  /* past target */
+		col += w;
+		pos++;
+	}
+
+	return pos;
+}
+
+/*
+ * Move cursor up one visual line (accounting for wrapping).
+ * Tries to maintain the same column position.
+ */
+static Posn
+move_visual_up(Posn p)
+{
+	int cur_row, cur_col;
+	int target_row;
+
+	cur_row = pos_to_screen(p, &cur_col);
+	if(cur_row == 0 && buf_origin == 0)
+		return p;  /* already at top */
+
+	target_row = cur_row - 1;
+	if(target_row < 0){
+		/* Need to scroll up first */
+		return file_prevline(curfile, p);
+	}
+
+	return screen_to_pos(target_row, cur_col);
+}
+
+/*
+ * Move cursor down one visual line (accounting for wrapping).
+ * Tries to maintain the same column position.
+ */
+static Posn
+move_visual_down(Posn p)
+{
+	int cur_row, cur_col;
+
+	cur_row = pos_to_screen(p, &cur_col);
+	return screen_to_pos(cur_row + 1, cur_col);
 }
 
 static void
@@ -506,6 +765,7 @@ draw_bufmode(void)
 	int row, col;
 	Posn p;
 	Rune ch;
+	int w;
 
 	if(!curfile){
 		term_clear();
@@ -518,72 +778,73 @@ draw_bufmode(void)
 	buf_scrollto(buf_cursor);
 	term_clear();
 
-	/* Draw file content */
-	p = buf_origin;
-	for(row = 0; row < term_rows && p <= curfile->b.nc; row++){
-		term_goto(row, 0);
-		col = 0;
-
-		while(p < curfile->b.nc && col < term_cols){
-			ch = filereadc(curfile, p);
-
-			if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2)
-				term_puts(CSI "7m");
-
-			if(ch == '\n'){
-				if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2)
-					term_puts(CSI "0m");
-				p++;
-				goto nextrow;  /* line complete, move to next row */
-			}else if(ch == '\t'){
-				int spaces = 8 - (col % 8);
-				while(spaces-- > 0 && col < term_cols){
-					term_puts(" ");
-					col++;
-				}
-			}else if(ch < 32){
-				char ctl[4];
-				snprint(ctl, sizeof ctl, "^%c", (int)(ch + '@'));
-				term_puts(ctl);
-				col += 2;
-			}else{
-				char buf[UTFmax + 1];
-				int n = runetochar(buf, &ch);
-				buf[n] = 0;
-				term_puts(buf);
-				col++;
-			}
-
-			if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2)
-				term_puts(CSI "0m");
-
-			p++;
-		}
-
-		/* Line was too long for screen - skip to end of line */
-		while(p < curfile->b.nc && filereadc(curfile, p) != '\n')
-			p++;
-		if(p < curfile->b.nc)
-			p++;
-nextrow:;
-	}
-
-	/* Position cursor */
+	/* Draw file content with wrapping */
 	p = buf_origin;
 	row = 0;
 	col = 0;
-	while(p < buf_cursor && row < term_rows){
+	term_goto(row, col);
+
+	while(row < term_rows && p <= curfile->b.nc){
+		if(p >= curfile->b.nc)
+			break;
+
 		ch = filereadc(curfile, p);
+
 		if(ch == '\n'){
+			if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2){
+				term_puts(CSI "7m");
+				term_puts(" ");  /* show selected newline */
+				term_puts(CSI "0m");
+			}
+			p++;
 			row++;
 			col = 0;
-		}else if(ch == '\t'){
-			col = (col + 8) & ~7;
-		}else{
-			col++;
+			if(row < term_rows)
+				term_goto(row, col);
+			continue;
 		}
+
+		/* Check if character fits on current line */
+		w = charwidth(ch, col);
+		if(col + w > term_cols){
+			/* Wrap to next line */
+			row++;
+			col = 0;
+			if(row >= term_rows)
+				break;
+			term_goto(row, col);
+		}
+
+		/* Draw the character */
+		if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2)
+			term_puts(CSI "7m");
+
+		if(ch == '\t'){
+			int spaces = 8 - (col % 8);
+			while(spaces-- > 0)
+				term_puts(" ");
+		}else if(ch < 32){
+			char ctl[4];
+			snprint(ctl, sizeof ctl, "^%c", (int)(ch + '@'));
+			term_puts(ctl);
+		}else{
+			char buf[UTFmax + 1];
+			int n = runetochar(buf, &ch);
+			buf[n] = 0;
+			term_puts(buf);
+		}
+
+		if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2)
+			term_puts(CSI "0m");
+
+		col += w;
 		p++;
 	}
+
+	/* Position cursor */
+	row = pos_to_screen(buf_cursor, &col);
+	if(row >= term_rows)
+		row = term_rows - 1;
 	if(col >= term_cols)
 		col = term_cols - 1;
 	term_goto(row, col);
@@ -596,6 +857,76 @@ termdraw(void)
 {
 	if(viewmode == ModeBuf && term_raw)
 		draw_bufmode();
+}
+
+/*
+ * Base64 encoding table
+ */
+static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/*
+ * Copy text from file positions p1 to p2 to system clipboard using OSC 52.
+ * This escape sequence is supported by most modern terminals (iTerm2, Terminal.app, etc.)
+ */
+static void
+copy_to_clipboard(Posn p1, Posn p2)
+{
+	Posn p, len;
+	Rune ch;
+	char *text, *b64text;
+	int textlen, b64len, i, j;
+	char buf[UTFmax];
+	int n;
+
+	if(p1 >= p2 || !curfile)
+		return;
+
+	len = p2 - p1;
+	if(len > 100000)  /* Limit to 100KB */
+		len = 100000;
+
+	/* Collect text */
+	text = malloc(len * UTFmax + 1);
+	if(!text)
+		return;
+
+	textlen = 0;
+	for(p = p1; p < p2 && p < curfile->b.nc && textlen < len * UTFmax; p++){
+		ch = filereadc(curfile, p);
+		n = runetochar(buf, &ch);
+		memmove(text + textlen, buf, n);
+		textlen += n;
+	}
+
+	/* Base64 encode */
+	b64len = ((textlen + 2) / 3) * 4;
+	b64text = malloc(b64len + 1);
+	if(!b64text){
+		free(text);
+		return;
+	}
+
+	j = 0;
+	for(i = 0; i < textlen; i += 3){
+		int a = (unsigned char)text[i];
+		int b = (i + 1 < textlen) ? (unsigned char)text[i + 1] : 0;
+		int c = (i + 2 < textlen) ? (unsigned char)text[i + 2] : 0;
+
+		b64text[j++] = b64[a >> 2];
+		b64text[j++] = b64[((a & 3) << 4) | (b >> 4)];
+		b64text[j++] = (i + 1 < textlen) ? b64[((b & 15) << 2) | (c >> 6)] : '=';
+		b64text[j++] = (i + 2 < textlen) ? b64[c & 63] : '=';
+	}
+	b64text[j] = '\0';
+
+	/* Send OSC 52 sequence */
+	term_puts("\033]52;c;");
+	term_puts(b64text);
+	term_puts("\007");
+	term_flush();
+
+	free(text);
+	free(b64text);
 }
 
 static void
@@ -631,13 +962,13 @@ handle_bufkey(int key)
 
 	case KEY_UP:
 	case 16:  /* Ctrl-P */
-		buf_cursor = file_prevline(curfile, buf_cursor);
+		buf_cursor = move_visual_up(buf_cursor);
 		needs_redraw = 1;
 		break;
 
 	case KEY_DOWN:
 	case 14:  /* Ctrl-N */
-		buf_cursor = file_nextline(curfile, buf_cursor);
+		buf_cursor = move_visual_down(buf_cursor);
 		if(buf_cursor > curfile->b.nc)
 			buf_cursor = curfile->b.nc;
 		needs_redraw = 1;
@@ -669,6 +1000,7 @@ handle_bufkey(int key)
 		needs_redraw = 1;
 		break;
 
+	case KEY_ALT_V:  /* Alt+V (Meta-V) - page up */
 	case KEY_PGUP:
 		for(i = 0; i < term_rows; i++){
 			Posn prev = file_prevline(curfile, buf_cursor);
@@ -702,6 +1034,23 @@ handle_bufkey(int key)
 				if(fileupdate(curfile, FALSE, FALSE))
 					seq++;
 				buf_cursor = linestart;
+				curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+			}
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
+		break;
+
+	case 11:  /* Ctrl-K - kill to end of line */
+		{
+			Posn lineend = file_lineend(curfile, buf_cursor);
+			if(buf_cursor < lineend){
+				/* Snarf the text first */
+				snarf(curfile, buf_cursor, lineend, &snarfbuf, 0);
+				/* Delete it */
+				logdelete(curfile, buf_cursor, lineend);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
 				curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
 			}
 			mark_mode = 0;
@@ -775,6 +1124,11 @@ handle_bufkey(int key)
 			curfile->dot.r.p2 = tmp;
 		}
 		needs_redraw = 1;
+		break;
+
+	case KEY_ALT_C:  /* Alt+C - copy to system clipboard */
+		if(curfile->dot.r.p1 != curfile->dot.r.p2)
+			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
 		break;
 
 	case KEY_DEL:  /* Delete key - delete char after cursor or selection */
@@ -939,6 +1293,9 @@ handle_bufkey(int key)
 			curfile->dot.r.p1 = mark_pos;
 			curfile->dot.r.p2 = buf_cursor;
 		}
+		/* Sync selection to system clipboard */
+		if(curfile->dot.r.p1 != curfile->dot.r.p2)
+			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
 	}
 
 	if(buf_cursor < 0)
@@ -955,8 +1312,6 @@ handle_mouse(void)
 	int pressed;
 	int btn;
 	Posn p;
-	int row, col;
-	Rune ch;
 
 	c = term_readchar();
 	while(c >= '0' && c <= '9'){
@@ -985,38 +1340,8 @@ handle_mouse(void)
 	if(!curfile)
 		return;
 
-	/* Convert screen position (x, y) to file position p */
-	/* Account for tab width when calculating column */
-	p = buf_origin;
-	row = 0;
-	col = 0;
-
-	/* Find the right row */
-	while(row < y && p < curfile->b.nc){
-		ch = filereadc(curfile, p);
-		if(ch == '\n'){
-			row++;
-			col = 0;
-		}
-		p++;
-	}
-
-	/* Find the right column, accounting for tab width */
-	col = 0;
-	while(col < x && p < curfile->b.nc){
-		ch = filereadc(curfile, p);
-		if(ch == '\n')
-			break;
-		if(ch == '\t'){
-			col += 8 - (col % 8);
-		}else if(ch < 32){
-			col += 2;  /* control chars displayed as ^X */
-		}else{
-			col++;
-		}
-		if(col <= x)  /* only advance p if we haven't passed target */
-			p++;
-	}
+	/* Convert screen position (x, y) to file position using wrapping-aware function */
+	p = screen_to_pos(y, x);
 
 	btn = button & 3;
 
@@ -1039,6 +1364,7 @@ handle_mouse(void)
 	}else if(btn == 0){
 		/* Left button press/release */
 		if(pressed){
+			mark_mode = 0;  /* Cancel any keyboard selection */
 			mouse_selecting = 1;
 			mouse_sel_start = p;
 			mouse_sel_end = p;
@@ -1058,6 +1384,9 @@ handle_mouse(void)
 					curfile->dot.r.p2 = mouse_sel_start;
 				}
 				buf_cursor = p;
+				/* Sync selection to system clipboard */
+				if(curfile->dot.r.p1 != curfile->dot.r.p2)
+					copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
 			}
 		}
 		needs_redraw = 1;
