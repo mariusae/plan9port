@@ -95,6 +95,7 @@ static int linedone = 0; /* line is complete, return chars from linebuf */
 #define KEY_ALT_BS	0x109  /* Alt/Option + Backspace */
 #define KEY_ALT_C	0x10a  /* Alt/Option + C - copy */
 #define KEY_ALT_V	0x10b  /* Alt/Option + V - page up (Meta-V) */
+#define KEY_ALT_X	0x10c  /* Alt/Option + X - cut to clipboard */
 
 /* Forward declarations */
 static void enter_bufmode(void);
@@ -538,6 +539,10 @@ term_readkey(void)
 	/* Alt/Option + V - paste */
 	if(c == 'v')
 		return KEY_ALT_V;
+
+	/* Alt/Option + X - cut to clipboard */
+	if(c == 'x')
+		return KEY_ALT_X;
 
 	if(c == '['){
 		c = term_readchar();
@@ -1212,6 +1217,22 @@ handle_bufkey(int key)
 	case KEY_ALT_C:  /* Alt+C - copy to system clipboard */
 		if(curfile->dot.r.p1 != curfile->dot.r.p2)
 			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
+		break;
+
+	case KEY_ALT_X:  /* Alt+X - cut to system clipboard */
+		if(curfile->dot.r.p1 != curfile->dot.r.p2){
+			/* Copy to internal clipboard and system clipboard */
+			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
+			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
+			/* Delete the selection */
+			logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
+			if(fileupdate(curfile, FALSE, FALSE))
+				seq++;
+			buf_cursor = curfile->dot.r.p1;
+			curfile->dot.r.p2 = curfile->dot.r.p1;
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
 		break;
 
 	case KEY_DEL:  /* Delete key - delete char after cursor or selection */
