@@ -105,6 +105,8 @@ static int linedone = 0; /* line is complete, return chars from linebuf */
 #define KEY_ALT_X	0x10c  /* Alt/Option + X - cut to clipboard */
 #define KEY_ALT_W	0x10d  /* Alt/Option + W - copy to clipboard (Emacs-style) */
 #define KEY_PASTE	0x10e  /* Bracketed paste start */
+#define KEY_ALT_LEFT	0x10f  /* Alt/Option + Left - backward word */
+#define KEY_ALT_RIGHT	0x110  /* Alt/Option + Right - forward word */
 
 /* Forward declarations */
 static void enter_bufmode(void);
@@ -135,6 +137,7 @@ static int count_visual_rows(Posn from, Posn to);
 static void save_file_state(File *f);
 static void restore_file_state(File *f);
 static int read_bracketed_paste(Rune **bufp);
+static int iswordchar(Rune ch);
 
 /* Output buffer for terminal */
 static char outbuf[16384];
@@ -615,6 +618,14 @@ term_readkey(void)
 	if(c == 'w')
 		return KEY_ALT_W;
 
+	/* ESC b - backward word (Meta-b, Option+Left on some terminals) */
+	if(c == 'b')
+		return KEY_ALT_LEFT;
+
+	/* ESC f - forward word (Meta-f, Option+Right on some terminals) */
+	if(c == 'f')
+		return KEY_ALT_RIGHT;
+
 	if(c == '['){
 		c = term_readchar();
 		if(c < 0)
@@ -642,6 +653,24 @@ term_readkey(void)
 				case 5: return KEY_PGUP;
 				case 6: return KEY_PGDN;
 				case 200: return KEY_PASTE;  /* Bracketed paste start */
+				}
+			}
+			/* Handle modifier sequences: ESC [ 1 ; <mod> <dir> */
+			if(c == ';'){
+				int mod;
+				c = term_readchar();
+				if(c < '0' || c > '9')
+					return term_readkey();
+				mod = c - '0';
+				c = term_readchar();
+				while(c >= '0' && c <= '9'){
+					mod = mod * 10 + (c - '0');
+					c = term_readchar();
+				}
+				/* mod 3 = Alt, mod 5 = Ctrl, mod 9 = Alt (some terminals) */
+				if(mod == 3 || mod == 9){
+					if(c == 'C') return KEY_ALT_RIGHT;
+					if(c == 'D') return KEY_ALT_LEFT;
 				}
 			}
 		}
@@ -1460,6 +1489,53 @@ handle_bufkey(int key)
 		needs_redraw = 1;
 		break;
 
+	case KEY_ALT_LEFT:  /* Alt+Left - backward word */
+		{
+			Posn p = buf_cursor;
+			Rune ch;
+			/* Skip whitespace/non-word chars backwards */
+			while(p > 0){
+				ch = filereadc(curfile, p - 1);
+				if(iswordchar(ch))
+					break;
+				p--;
+			}
+			/* Skip word chars backwards */
+			while(p > 0){
+				ch = filereadc(curfile, p - 1);
+				if(!iswordchar(ch))
+					break;
+				p--;
+			}
+			buf_cursor = p;
+			needs_redraw = 1;
+		}
+		break;
+
+	case KEY_ALT_RIGHT:  /* Alt+Right - forward word */
+		{
+			Posn p = buf_cursor;
+			Posn nc = curfile->b.nc;
+			Rune ch;
+			/* Skip word chars forward */
+			while(p < nc){
+				ch = filereadc(curfile, p);
+				if(!iswordchar(ch))
+					break;
+				p++;
+			}
+			/* Skip whitespace/non-word chars forward */
+			while(p < nc){
+				ch = filereadc(curfile, p);
+				if(iswordchar(ch))
+					break;
+				p++;
+			}
+			buf_cursor = p;
+			needs_redraw = 1;
+		}
+		break;
+
 	case KEY_ALT_V:  /* Alt+V (Meta-V) - page up */
 	case KEY_PGUP:
 		for(i = 0; i < term_rows; i++){
@@ -1509,6 +1585,12 @@ handle_bufkey(int key)
 				snarf(curfile, buf_cursor, lineend, &snarfbuf, 0);
 				/* Delete it */
 				logdelete(curfile, buf_cursor, lineend);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
+				curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+			}else if(buf_cursor < curfile->b.nc){
+				/* At end of line but not end of file - delete the newline */
+				logdelete(curfile, buf_cursor, buf_cursor + 1);
 				if(fileupdate(curfile, FALSE, FALSE))
 					seq++;
 				curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
