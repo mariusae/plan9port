@@ -139,6 +139,6 @@ termwrite(char *s)
 			Strinsert(&cmdstr, p, cmdstr.n);
 		cmdptadv += p->n;
 		freetmpstr(p);
-	}else
+	}else if(!in_bufmode())
 		Write(2, s, strlen(s));
 }

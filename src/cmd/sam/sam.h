@@ -396,10 +396,11 @@ extern int	outbuffered;
 
 /* term.c - terminal mode interface for -d flag */
 extern int	termmode;	/* terminal mode active (tty detected) */
-void	terminit(void);		/* initialize if stdin is a tty */
+void	terminit(int);		/* initialize if stdin is a tty; arg: start in buffer mode */
 int	terminputc(void);	/* get input char, handle ESC for buffer mode */
 void	termdraw(void);		/* redraw terminal display */
 void	termcleanup(void);	/* restore terminal state */
+int	in_bufmode(void);	/* check if in buffer mode (for suppressing output) */
 
 #include "mesg.h"
 

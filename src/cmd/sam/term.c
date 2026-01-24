@@ -58,6 +58,10 @@ static int needs_redraw = 1;
 static int mark_mode = 0;      /* Emacs-style mark active */
 static Posn mark_pos = 0;      /* Position where mark was set */
 
+/* Status message display */
+static char status_msg[256];
+static struct timeval status_expire = {0, 0};
+
 /* Per-file view state */
 #define MAX_FILE_STATES 64
 static struct {
@@ -124,6 +128,7 @@ static void queue_char(Rune c);
 static int dequeue_char(void);
 static int queue_empty(void);
 static void queue_string(char *s);
+static void set_status(char *msg);
 static int runewidth(Rune ch);
 static int charwidth(Rune ch, int col);
 static int count_visual_rows(Posn from, Posn to);
@@ -384,6 +389,46 @@ queue_string(char *s)
 {
 	while(*s)
 		queue_char(*s++);
+}
+
+/*
+ * Set a status message to display at bottom of screen for 2 seconds.
+ */
+static void
+set_status(char *msg)
+{
+	strncpy(status_msg, msg, sizeof(status_msg) - 1);
+	status_msg[sizeof(status_msg) - 1] = '\0';
+	gettimeofday(&status_expire, NULL);
+	status_expire.tv_sec += 2;
+	needs_redraw = 1;
+}
+
+/*
+ * Check if status message is still active.
+ */
+static int
+status_active(void)
+{
+	struct timeval now;
+	if(status_msg[0] == '\0')
+		return 0;
+	gettimeofday(&now, NULL);
+	if(now.tv_sec > status_expire.tv_sec ||
+	   (now.tv_sec == status_expire.tv_sec && now.tv_usec >= status_expire.tv_usec)){
+		status_msg[0] = '\0';
+		return 0;
+	}
+	return 1;
+}
+
+/*
+ * Check if we're in buffer mode (for suppressing output).
+ */
+int
+in_bufmode(void)
+{
+	return termmode && viewmode == ModeBuf;
 }
 
 /*
@@ -1092,6 +1137,21 @@ draw_bufmode(void)
 		p++;
 	}
 
+	/* Draw status message at bottom if active */
+	if(status_active()){
+		int slen, i;
+		term_goto(term_rows - 1, 0);
+		term_puts(CSI "7m");  /* inverse video */
+		slen = strlen(status_msg);
+		if(slen > term_cols)
+			slen = term_cols;
+		term_write(status_msg, slen);
+		/* Pad with spaces to fill the line */
+		for(i = slen; i < term_cols; i++)
+			term_puts(" ");
+		term_puts(CSI "0m");
+	}
+
 	/* Position cursor */
 	row = pos_to_screen(buf_cursor, &col);
 	if(row >= term_rows)
@@ -1470,6 +1530,27 @@ handle_bufkey(int key)
 	case 18:  /* Ctrl-R - reverse look (find previous occurrence of selection) */
 		if(look_backward())
 			needs_redraw = 1;
+		break;
+
+	case 19:  /* Ctrl-S - save (write file in background, stay in buffer mode) */
+		if(curfile->name.s[0] == 0){
+			/* No filename - need to exit to command mode */
+			exit_bufmode();
+			queue_string("w ");
+		}else{
+			Address save_addr = addr;
+			addr.r.p1 = 0;
+			addr.r.p2 = curfile->b.nc;
+			addr.f = curfile;
+			getname(curfile, 0, FALSE);
+			writef(curfile);
+			addr = save_addr;
+		}
+		break;
+
+	case 17:  /* Ctrl-Q - quit (return to command mode, issue 'q' command) */
+		exit_bufmode();
+		queue_string("q\n");
 		break;
 
 	case 23:  /* Ctrl-W - kill region (cut selection) */
