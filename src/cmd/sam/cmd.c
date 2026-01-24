@@ -91,6 +91,9 @@ inputc(void)
 		r = *termoutp++;
 		if(termoutp == terminp)
 			terminp = termoutp = termline;
+	}else if(tflag){
+		/* Terminal mode - get input through terminal UI */
+		return terminputc();
 	}else{
    		do{
 			n = read(0, buf+nbuf, 1);

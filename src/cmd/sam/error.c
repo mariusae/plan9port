@@ -139,6 +139,16 @@ termwrite(char *s)
 			Strinsert(&cmdstr, p, cmdstr.n);
 		cmdptadv += p->n;
 		freetmpstr(p);
+	}else if(tflag){
+		/* Terminal mode - write to cmd buffer for display */
+		p = tmpcstr(s);
+		if(cmd){
+			loginsert(cmd, cmd->b.nc, p->s, p->n);
+			fileupdate(cmd, FALSE, FALSE);
+			cmd->dot.r.p1 = cmd->dot.r.p2 = cmd->b.nc;
+		}else
+			Strinsert(&cmdstr, p, cmdstr.n);
+		freetmpstr(p);
 	}else
 		Write(2, s, strlen(s));
 }

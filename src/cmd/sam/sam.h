@@ -393,6 +393,14 @@ extern int	panicking;
 extern Rune	empty[];
 extern int	termlocked;
 extern int	outbuffered;
+extern int	tflag;
+
+/* term.c - terminal mode interface */
+void	termstartup(void);
+void	termcmdloop(void);
+int	terminputc(void);
+void	termdraw(void);
+void	termcleanup(void);
 
 #include "mesg.h"
 

@@ -18,6 +18,7 @@ OFILES=sam.$O\
 	shell.$O\
 	string.$O\
 	sys.$O\
+	term.$O\
 	unix.$O\
 	util.$O\
 	xec.$O\

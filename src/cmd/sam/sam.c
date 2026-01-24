@@ -18,6 +18,7 @@ List	tempfile = { 'p' };
 int	quitok = TRUE;
 int	downloaded;
 int	dflag;
+int	tflag;  /* terminal mode flag */
 int	Rflag;
 char	*machine;
 char	*home;
@@ -53,13 +54,16 @@ main(int _argc, char **_argv)
 	case 'd':
 		dflag++;
 		break;
+	case 't':
+		tflag++;
+		break;
 	case 'r':
 		machine = EARGF(usage());
 		break;
 	case 'R':
 		Rflag++;
 		break;
-	case 't':
+	case 'T':
 		samterm = EARGF(usage());
 		break;
 	case 's':
@@ -90,7 +94,9 @@ main(int _argc, char **_argv)
 	disk = diskinit();
 	if(home == 0)
 		home = "/";
-	if(!dflag)
+	if(tflag)
+		termstartup();
+	else if(!dflag)
 		startup(machine, Rflag, termargs, (char**)argv);
 	notify(notifyf);
 	getcurwd();
@@ -119,7 +125,7 @@ main(int _argc, char **_argv)
 void
 usage(void)
 {
-	dprint("usage: sam [-d] [-t samterm] [-s sam name] [-r machine] [file ...]\n");
+	dprint("usage: sam [-d] [-t] [-T samterm] [-s sam name] [-r machine] [file ...]\n");
 	exits("usage");
 }
 
