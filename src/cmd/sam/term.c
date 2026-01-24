@@ -10,10 +10,12 @@
  * If stdin is not a tty, behaves like regular -d mode.
  */
 
-#include "sam.h"
-#include <termios.h>
+/* Include system headers before plan9port headers to avoid conflicts */
 #include <sys/ioctl.h>
+#include <termios.h>
 #include <signal.h>
+
+#include "sam.h"
 
 /* Global: terminal mode active (exported to sam.h) */
 int	termmode = 0;
