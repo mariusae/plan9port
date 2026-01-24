@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
+#include <sys/time.h>
 #include <termios.h>
 #include <signal.h>
 #include <wchar.h>
@@ -51,6 +52,8 @@ static int mouse_enabled = 0;
 static int mouse_selecting = 0;
 static Posn mouse_sel_start = 0;
 static Posn mouse_sel_end = 0;
+static struct timeval last_click_time = {0, 0};
+static Posn last_click_pos = 0;
 static int needs_redraw = 1;
 static int mark_mode = 0;      /* Emacs-style mark active */
 static Posn mark_pos = 0;      /* Position where mark was set */
@@ -234,6 +237,9 @@ enter_bufmode(void)
 	term_puts(CSI "?1006h");  /* SGR extended mode */
 	mouse_enabled = 1;
 
+	/* Set cursor to non-blinking block (DECSCUSR) */
+	term_puts(CSI "2 q");
+
 	term_flush();
 	term_raw = 1;
 	viewmode = ModeBuf;
@@ -271,6 +277,9 @@ exit_bufmode(void)
 		term_puts(CSI "?1006l");
 		mouse_enabled = 0;
 	}
+
+	/* Restore default cursor style */
+	term_puts(CSI "0 q");
 
 	/* Switch back to main screen (restores previous content) */
 	term_puts(CSI "?1049l");
@@ -860,6 +869,7 @@ draw_bufmode(void)
 
 	buf_scrollto(buf_cursor);
 	term_clear();
+	term_puts(CSI "0m");  /* Reset attributes to ensure clean state */
 
 	/* Draw file content with wrapping */
 	p = buf_origin;
@@ -1012,6 +1022,155 @@ copy_to_clipboard(Posn p1, Posn p2)
 	free(b64text);
 }
 
+/*
+ * Look: search for next occurrence of selected text.
+ * Returns 1 if found, 0 if not.
+ */
+static int
+look_forward(void)
+{
+	Posn p1, p2, len, pos, match_start;
+	Rune ch, target;
+	int matched;
+
+	if(!curfile)
+		return 0;
+
+	p1 = curfile->dot.r.p1;
+	p2 = curfile->dot.r.p2;
+	len = p2 - p1;
+
+	if(len <= 0)
+		return 0;
+
+	/* Search starting after current selection */
+	pos = p2;
+	while(pos <= curfile->b.nc - len){
+		/* Try to match at this position */
+		matched = 1;
+		for(Posn i = 0; i < len; i++){
+			target = filereadc(curfile, p1 + i);
+			ch = filereadc(curfile, pos + i);
+			if(ch != target){
+				matched = 0;
+				break;
+			}
+		}
+		if(matched){
+			match_start = pos;
+			/* Found - update selection and cursor */
+			curfile->dot.r.p1 = match_start;
+			curfile->dot.r.p2 = match_start + len;
+			buf_cursor = match_start;
+			mark_mode = 0;
+			return 1;
+		}
+		pos++;
+	}
+
+	/* Wrap around to beginning */
+	pos = 0;
+	while(pos < p1){
+		matched = 1;
+		for(Posn i = 0; i < len; i++){
+			target = filereadc(curfile, p1 + i);
+			ch = filereadc(curfile, pos + i);
+			if(ch != target){
+				matched = 0;
+				break;
+			}
+		}
+		if(matched){
+			match_start = pos;
+			curfile->dot.r.p1 = match_start;
+			curfile->dot.r.p2 = match_start + len;
+			buf_cursor = match_start;
+			mark_mode = 0;
+			return 1;
+		}
+		pos++;
+	}
+
+	return 0;
+}
+
+/*
+ * Reverse look: search for previous occurrence of selected text.
+ * Returns 1 if found, 0 if not.
+ */
+static int
+look_backward(void)
+{
+	Posn p1, p2, len, pos, match_start;
+	Rune ch, target;
+	int matched;
+
+	if(!curfile)
+		return 0;
+
+	p1 = curfile->dot.r.p1;
+	p2 = curfile->dot.r.p2;
+	len = p2 - p1;
+
+	if(len <= 0)
+		return 0;
+
+	/* Search backward starting before current selection */
+	if(p1 == 0)
+		pos = curfile->b.nc - len;  /* Wrap to end */
+	else
+		pos = p1 - 1;
+
+	/* Search backward from pos to beginning */
+	while(pos >= 0){
+		matched = 1;
+		for(Posn i = 0; i < len; i++){
+			target = filereadc(curfile, p1 + i);
+			ch = filereadc(curfile, pos + i);
+			if(ch != target){
+				matched = 0;
+				break;
+			}
+		}
+		if(matched){
+			match_start = pos;
+			curfile->dot.r.p1 = match_start;
+			curfile->dot.r.p2 = match_start + len;
+			buf_cursor = match_start;
+			mark_mode = 0;
+			return 1;
+		}
+		if(pos == 0)
+			break;
+		pos--;
+	}
+
+	/* Wrap around to end */
+	pos = curfile->b.nc - len;
+	while(pos > p1){
+		matched = 1;
+		for(Posn i = 0; i < len; i++){
+			target = filereadc(curfile, p1 + i);
+			ch = filereadc(curfile, pos + i);
+			if(ch != target){
+				matched = 0;
+				break;
+			}
+		}
+		if(matched){
+			match_start = pos;
+			curfile->dot.r.p1 = match_start;
+			curfile->dot.r.p2 = match_start + len;
+			buf_cursor = match_start;
+			mark_mode = 0;
+			return 1;
+		}
+		pos--;
+	}
+
+	return 0;
+}
+
 static void
 handle_bufkey(int key)
 {
@@ -1141,10 +1300,18 @@ handle_bufkey(int key)
 		}
 		break;
 
-	case 7:  /* Ctrl-G - cancel mark/selection */
-		mark_mode = 0;
-		curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
-		needs_redraw = 1;
+	case 7:  /* Ctrl-G - exit buffer mode (same as ESC) */
+		exit_bufmode();
+		break;
+
+	case 12:  /* Ctrl-L - look (find next occurrence of selection) */
+		if(look_forward())
+			needs_redraw = 1;
+		break;
+
+	case 18:  /* Ctrl-R - reverse look (find previous occurrence of selection) */
+		if(look_backward())
+			needs_redraw = 1;
 		break;
 
 	case 23:  /* Ctrl-W - kill region (cut selection) */
@@ -1393,6 +1560,72 @@ handle_bufkey(int key)
 		buf_cursor = curfile->b.nc;
 }
 
+/*
+ * Check if a character is a word character (for double-click selection).
+ * Word characters are alphanumeric plus underscore.
+ */
+static int
+iswordchar(Rune ch)
+{
+	return (ch >= 'a' && ch <= 'z') ||
+	       (ch >= 'A' && ch <= 'Z') ||
+	       (ch >= '0' && ch <= '9') ||
+	       ch == '_';
+}
+
+/*
+ * Find the start of a word at or before position p.
+ */
+static Posn
+word_start(File *f, Posn p)
+{
+	Rune ch;
+	if(p <= 0 || p > f->b.nc)
+		return p;
+	/* First check if we're on a word character */
+	ch = filereadc(f, p);
+	if(!iswordchar(ch) && p > 0){
+		/* Check the character before */
+		ch = filereadc(f, p - 1);
+		if(!iswordchar(ch))
+			return p;  /* Not on a word */
+		p--;
+	}
+	/* Move backward to start of word */
+	while(p > 0){
+		ch = filereadc(f, p - 1);
+		if(!iswordchar(ch))
+			break;
+		p--;
+	}
+	return p;
+}
+
+/*
+ * Find the end of a word at or after position p.
+ */
+static Posn
+word_end(File *f, Posn p)
+{
+	Rune ch;
+	if(p < 0 || p >= f->b.nc)
+		return p;
+	/* Check if we're on a word character */
+	ch = filereadc(f, p);
+	if(!iswordchar(ch)){
+		/* Not on a word character */
+		return p;
+	}
+	/* Move forward to end of word */
+	while(p < f->b.nc){
+		ch = filereadc(f, p);
+		if(!iswordchar(ch))
+			break;
+		p++;
+	}
+	return p;
+}
+
 static void
 handle_mouse(void)
 {
@@ -1450,16 +1683,107 @@ handle_mouse(void)
 			}
 			needs_redraw = 1;
 		}
+	}else if(button == 64){
+		/* Scroll up (show earlier content) - check before btn==0 since 64&3==0 */
+		int i;
+		for(i = 0; i < 3; i++){
+			if(buf_origin > 0)
+				buf_origin = file_prevline(curfile, buf_origin);
+		}
+		/* Cursor stays in place - will naturally move down on screen */
+		needs_redraw = 1;
+	}else if(button == 65){
+		/* Scroll down (show later content) */
+		int i;
+		for(i = 0; i < 3; i++){
+			buf_origin = file_nextline(curfile, buf_origin);
+			if(buf_origin >= curfile->b.nc){
+				buf_origin = file_linestart(curfile, curfile->b.nc);
+				break;
+			}
+		}
+		/* Move cursor down if it's now above the view */
+		if(buf_cursor < buf_origin)
+			buf_cursor = buf_origin;
+		needs_redraw = 1;
+	}else if(button == 8 && pressed){
+		/* Option/Alt + left click: look for selection */
+		Posn ws, we;
+
+		/* If no selection, select word under cursor first */
+		if(curfile->dot.r.p1 == curfile->dot.r.p2){
+			ws = word_start(curfile, p);
+			we = word_end(curfile, p);
+			if(ws < we){
+				curfile->dot.r.p1 = ws;
+				curfile->dot.r.p2 = we;
+			}
+		}
+
+		/* Now execute look if we have a selection */
+		if(curfile->dot.r.p1 != curfile->dot.r.p2){
+			if(look_forward()){
+				/* Move cursor to start of new selection */
+				buf_cursor = curfile->dot.r.p1;
+				/* Sync to clipboard */
+				copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
+			}
+		}
+
+		mark_mode = 0;
+		mouse_selecting = 0;
+		needs_redraw = 1;
 	}else if(btn == 0){
 		/* Left button press/release */
 		if(pressed){
+			struct timeval now;
+			long elapsed_ms;
+			int is_doubleclick = 0;
+
+			gettimeofday(&now, NULL);
+			elapsed_ms = (now.tv_sec - last_click_time.tv_sec) * 1000 +
+			             (now.tv_usec - last_click_time.tv_usec) / 1000;
+
+			/* Check for double-click: same position within 400ms */
+			if(elapsed_ms < 400 && p == last_click_pos){
+				is_doubleclick = 1;
+			}
+
+			last_click_time = now;
+			last_click_pos = p;
+
 			mark_mode = 0;  /* Cancel any keyboard selection */
-			mouse_selecting = 1;
-			mouse_sel_start = p;
-			mouse_sel_end = p;
-			buf_cursor = p;
-			curfile->dot.r.p1 = p;
-			curfile->dot.r.p2 = p;
+
+			if(is_doubleclick){
+				/* Double-click: select word */
+				Posn ws, we;
+				ws = word_start(curfile, p);
+				we = word_end(curfile, p);
+				if(ws < we){
+					curfile->dot.r.p1 = ws;
+					curfile->dot.r.p2 = we;
+					buf_cursor = ws;  /* Position cursor at start to avoid visual confusion */
+					mouse_selecting = 0;
+					/* Sync selection to system clipboard */
+					copy_to_clipboard(ws, we);
+				}else{
+					/* Not on a word, just place cursor */
+					mouse_selecting = 1;
+					mouse_sel_start = p;
+					mouse_sel_end = p;
+					buf_cursor = p;
+					curfile->dot.r.p1 = p;
+					curfile->dot.r.p2 = p;
+				}
+			}else{
+				/* Single click: start selection */
+				mouse_selecting = 1;
+				mouse_sel_start = p;
+				mouse_sel_end = p;
+				buf_cursor = p;
+				curfile->dot.r.p1 = p;
+				curfile->dot.r.p2 = p;
+			}
 		}else{
 			/* Left button release */
 			if(mouse_selecting){
@@ -1477,21 +1801,6 @@ handle_mouse(void)
 				if(curfile->dot.r.p1 != curfile->dot.r.p2)
 					copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
 			}
-		}
-		needs_redraw = 1;
-	}else if(button == 64){
-		int i;
-		for(i = 0; i < 3; i++){
-			if(buf_origin > 0)
-				buf_origin = file_prevline(curfile, buf_origin);
-		}
-		needs_redraw = 1;
-	}else if(button == 65){
-		int i;
-		for(i = 0; i < 3; i++){
-			buf_origin = file_nextline(curfile, buf_origin);
-			if(buf_origin >= curfile->b.nc)
-				buf_origin = file_linestart(curfile, curfile->b.nc);
 		}
 		needs_redraw = 1;
 	}
@@ -1566,6 +1875,7 @@ terminputc(void)
 
 			switch(r){
 			case 27:  /* ESC */
+			case 7:   /* Ctrl-G */
 				enter_bufmode();
 				goto bufmode;
 
