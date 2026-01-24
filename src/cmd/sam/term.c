@@ -1579,9 +1579,6 @@ handle_bufkey(int key)
 			curfile->dot.r.p1 = mark_pos;
 			curfile->dot.r.p2 = buf_cursor;
 		}
-		/* Sync selection to system clipboard */
-		if(curfile->dot.r.p1 != curfile->dot.r.p2)
-			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
 	}
 
 	if(buf_cursor < 0)
@@ -1670,9 +1667,6 @@ handle_mouse(void)
 					curfile->dot.r.p2 = mouse_sel_start;
 				}
 				buf_cursor = p;
-				/* Sync selection to system clipboard */
-				if(curfile->dot.r.p1 != curfile->dot.r.p2)
-					copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
 			}
 		}
 		needs_redraw = 1;
