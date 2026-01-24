@@ -12,6 +12,7 @@
 
 /* Include system headers before plan9port headers to avoid conflicts */
 #include <sys/ioctl.h>
+#include <sys/select.h>
 #include <termios.h>
 #include <signal.h>
 
@@ -28,10 +29,12 @@ enum {
 
 /* Terminal state */
 static struct termios orig_termios;
+static struct termios cmd_termios;  /* non-canonical mode for command mode */
 static int viewmode = ModeCmd;
 static int term_rows = 24;
 static int term_cols = 80;
 static int term_raw = 0;
+static int term_inited = 0;  /* terminal settings have been modified */
 static Posn buf_origin = 0;
 static Posn buf_cursor = 0;
 static int mouse_enabled = 0;
@@ -39,11 +42,19 @@ static int mouse_selecting = 0;
 static Posn mouse_sel_start = 0;
 static Posn mouse_sel_end = 0;
 static int needs_redraw = 1;
+static int mark_mode = 0;      /* Emacs-style mark active */
+static Posn mark_pos = 0;      /* Position where mark was set */
 
 /* Input queue for returning characters to sam */
 static Rune inputqueue[4096];
 static int inputhead = 0;
 static int inputtail = 0;
+
+/* Line buffer for command mode line editing */
+static Rune linebuf[4096];
+static int linelen = 0;
+static int linepos = 0;  /* position in line being returned */
+static int linedone = 0; /* line is complete, return chars from linebuf */
 
 /* ANSI escape sequences */
 #define ESC "\033"
@@ -61,6 +72,7 @@ static int inputtail = 0;
 #define KEY_PGDN	0x107
 #define KEY_DEL		0x108
 #define KEY_MOUSE	0x200
+#define KEY_ALT_BS	0x109  /* Alt/Option + Backspace */
 
 /* Forward declarations */
 static void enter_bufmode(void);
@@ -71,7 +83,6 @@ static void term_goto(int row, int col);
 static void term_write(char *s, int n);
 static void term_puts(char *s);
 static void term_flush(void);
-static void term_status(char *msg);
 static int term_readkey(void);
 static void draw_bufmode(void);
 static void handle_bufkey(int key);
@@ -154,22 +165,6 @@ term_goto(int row, int col)
 }
 
 static void
-term_status(char *msg)
-{
-	int len, i;
-
-	term_goto(term_rows - 1, 0);
-	term_puts(CSI "7m");  /* reverse video */
-	len = strlen(msg);
-	if(len > term_cols)
-		len = term_cols;
-	term_write(msg, len);
-	for(i = len; i < term_cols; i++)
-		term_puts(" ");
-	term_puts(CSI "0m");
-}
-
-static void
 sigwinch_handler(int sig)
 {
 	USED(sig);
@@ -207,8 +202,9 @@ enter_bufmode(void)
 	}
 
 	/* Enable mouse tracking */
-	term_puts(CSI "?1000h");
-	term_puts(CSI "?1006h");
+	term_puts(CSI "?1000h");  /* basic mouse tracking */
+	term_puts(CSI "?1002h");  /* button-event tracking (drag) */
+	term_puts(CSI "?1006h");  /* SGR extended mode */
 	mouse_enabled = 1;
 
 	term_flush();
@@ -225,7 +221,7 @@ enter_bufmode(void)
 }
 
 /*
- * Exit buffer mode: restore terminal to normal state
+ * Exit buffer mode: restore terminal to command mode state
  */
 static void
 exit_bufmode(void)
@@ -236,6 +232,7 @@ exit_bufmode(void)
 	/* Disable mouse */
 	if(mouse_enabled){
 		term_puts(CSI "?1000l");
+		term_puts(CSI "?1002l");
 		term_puts(CSI "?1006l");
 		mouse_enabled = 0;
 	}
@@ -244,8 +241,8 @@ exit_bufmode(void)
 	term_puts(CSI "?1049l");
 	term_flush();
 
-	/* Restore terminal settings */
-	tcsetattr(0, TCSAFLUSH, &orig_termios);
+	/* Restore command mode terminal settings (non-canonical, with echo) */
+	tcsetattr(0, TCSAFLUSH, &cmd_termios);
 	term_raw = 0;
 	viewmode = ModeCmd;
 }
@@ -255,11 +252,16 @@ termcleanup(void)
 {
 	if(term_raw)
 		exit_bufmode();
+	/* Restore original terminal settings */
+	if(term_inited){
+		tcsetattr(0, TCSAFLUSH, &orig_termios);
+		term_inited = 0;
+	}
 }
 
 /*
  * Initialize terminal mode.
- * Just check if stdin is a tty - don't change terminal settings.
+ * Set terminal to non-canonical mode so ESC is detected immediately.
  */
 void
 terminit(void)
@@ -272,6 +274,17 @@ terminit(void)
 	termmode = 1;
 	viewmode = ModeCmd;
 	inputhead = inputtail = 0;
+
+	/* Save original terminal settings */
+	if(tcgetattr(0, &orig_termios) == 0){
+		/* Set up command mode: non-canonical, no echo (we handle both) */
+		cmd_termios = orig_termios;
+		cmd_termios.c_lflag &= ~(ICANON | ECHO);  /* disable canonical mode and echo */
+		cmd_termios.c_cc[VMIN] = 1;
+		cmd_termios.c_cc[VTIME] = 0;
+		tcsetattr(0, TCSAFLUSH, &cmd_termios);
+		term_inited = 1;
+	}
 
 	signal(SIGWINCH, sigwinch_handler);
 	atexit(termcleanup);
@@ -329,6 +342,36 @@ term_readchar(void)
 	return c;
 }
 
+/*
+ * Read a character with timeout (for escape sequence detection).
+ * Returns -1 if no character available within timeout_ms milliseconds.
+ */
+static int
+term_readchar_timeout(int timeout_ms)
+{
+	fd_set fds;
+	struct timeval tv;
+	unsigned char c;
+
+	if(pending_char >= 0){
+		int ch = pending_char;
+		pending_char = -1;
+		return ch;
+	}
+
+	FD_ZERO(&fds);
+	FD_SET(0, &fds);
+	tv.tv_sec = timeout_ms / 1000;
+	tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+	if(select(1, &fds, NULL, NULL, &tv) <= 0)
+		return -1;
+
+	if(read(0, &c, 1) != 1)
+		return -1;
+	return c;
+}
+
 static int
 term_readkey(void)
 {
@@ -339,10 +382,14 @@ term_readkey(void)
 	if(c != 27)
 		return c;
 
-	/* Escape sequence */
-	c = term_readchar();
+	/* Escape sequence - use timeout to detect bare ESC vs sequence */
+	c = term_readchar_timeout(50);  /* 50ms timeout */
 	if(c < 0 || c == 27)
 		return KEY_ESC;
+
+	/* Alt/Option + Backspace */
+	if(c == 127 || c == 8)
+		return KEY_ALT_BS;
 
 	if(c == '['){
 		c = term_readchar();
@@ -384,7 +431,8 @@ term_readkey(void)
 		if(c == 'F') return KEY_END;
 	}
 
-	return -1;
+	/* Unrecognized escape sequence - ignore and get next key */
+	return term_readkey();
 }
 
 static Posn
@@ -438,16 +486,16 @@ buf_scrollto(Posn p)
 		if(filereadc(curfile, pos) == '\n')
 			lines++;
 		pos++;
-		if(lines >= term_rows - 2)
+		if(lines >= term_rows)
 			break;
 	}
 
 	if(p < buf_origin){
 		buf_origin = file_linestart(curfile, p);
-	}else if(lines >= term_rows - 2){
+	}else if(lines >= term_rows){
 		int i;
 		buf_origin = file_linestart(curfile, p);
-		for(i = 0; i < (term_rows - 2) / 2 && buf_origin > 0; i++)
+		for(i = 0; i < term_rows / 2 && buf_origin > 0; i++)
 			buf_origin = file_prevline(curfile, buf_origin);
 	}
 }
@@ -455,15 +503,14 @@ buf_scrollto(Posn p)
 static void
 draw_bufmode(void)
 {
-	char status[256];
-	char *fname;
 	int row, col;
 	Posn p;
 	Rune ch;
 
 	if(!curfile){
 		term_clear();
-		term_status(" SAM [Buffer] No file  ESC=return ");
+		term_goto(0, 0);
+		term_puts("No file");
 		term_flush();
 		return;
 	}
@@ -473,7 +520,7 @@ draw_bufmode(void)
 
 	/* Draw file content */
 	p = buf_origin;
-	for(row = 0; row < term_rows - 1 && p <= curfile->b.nc; row++){
+	for(row = 0; row < term_rows && p <= curfile->b.nc; row++){
 		term_goto(row, 0);
 		col = 0;
 
@@ -487,7 +534,7 @@ draw_bufmode(void)
 				if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2)
 					term_puts(CSI "0m");
 				p++;
-				break;
+				goto nextrow;  /* line complete, move to next row */
 			}else if(ch == '\t'){
 				int spaces = 8 - (col % 8);
 				while(spaces-- > 0 && col < term_cols){
@@ -513,29 +560,19 @@ draw_bufmode(void)
 			p++;
 		}
 
+		/* Line was too long for screen - skip to end of line */
 		while(p < curfile->b.nc && filereadc(curfile, p) != '\n')
 			p++;
 		if(p < curfile->b.nc)
 			p++;
+nextrow:;
 	}
-
-	/* Status bar */
-	if(curfile->name.s[0]){
-		fname = Strtoc(&curfile->name);
-		snprint(status, sizeof status, " %s%s  #%ld  Dot:#%ld,#%ld  ESC=return ",
-			curfile->mod ? "*" : "", fname,
-			buf_cursor, curfile->dot.r.p1, curfile->dot.r.p2);
-		free(fname);
-	}else{
-		snprint(status, sizeof status, " (unnamed)  #%ld  ESC=return ", buf_cursor);
-	}
-	term_status(status);
 
 	/* Position cursor */
 	p = buf_origin;
 	row = 0;
 	col = 0;
-	while(p < buf_cursor && row < term_rows - 1){
+	while(p < buf_cursor && row < term_rows){
 		ch = filereadc(curfile, p);
 		if(ch == '\n'){
 			row++;
@@ -575,8 +612,21 @@ handle_bufkey(int key)
 
 	switch(key){
 	case KEY_ESC:
-		curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+		/* Preserve selection (dot) when exiting buffer mode */
 		exit_bufmode();
+		break;
+
+	case 0:  /* Ctrl-Space - toggle mark for selection */
+		if(mark_mode){
+			/* Second Ctrl-Space: finalize selection */
+			mark_mode = 0;
+		}else{
+			/* First Ctrl-Space: set mark and start selection */
+			mark_mode = 1;
+			mark_pos = buf_cursor;
+			curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+		}
+		needs_redraw = 1;
 		break;
 
 	case KEY_UP:
@@ -620,7 +670,7 @@ handle_bufkey(int key)
 		break;
 
 	case KEY_PGUP:
-		for(i = 0; i < term_rows - 2; i++){
+		for(i = 0; i < term_rows; i++){
 			Posn prev = file_prevline(curfile, buf_cursor);
 			if(prev == buf_cursor)
 				break;
@@ -631,7 +681,7 @@ handle_bufkey(int key)
 
 	case KEY_PGDN:
 	case 22:  /* Ctrl-V */
-		for(i = 0; i < term_rows - 2; i++){
+		for(i = 0; i < term_rows; i++){
 			buf_cursor = file_nextline(curfile, buf_cursor);
 			if(buf_cursor >= curfile->b.nc){
 				buf_cursor = curfile->b.nc;
@@ -641,58 +691,77 @@ handle_bufkey(int key)
 		needs_redraw = 1;
 		break;
 
-	case 21:  /* Ctrl-U */
-		for(i = 0; i < (term_rows - 2) / 2; i++){
-			Posn prev = file_prevline(curfile, buf_cursor);
-			if(prev == buf_cursor)
-				break;
-			buf_cursor = prev;
+	case 21:  /* Ctrl-U - kill to beginning of line */
+		{
+			Posn linestart = file_linestart(curfile, buf_cursor);
+			if(linestart < buf_cursor){
+				/* Snarf the text first */
+				snarf(curfile, linestart, buf_cursor, &snarfbuf, 0);
+				/* Delete it */
+				logdelete(curfile, linestart, buf_cursor);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
+				buf_cursor = linestart;
+				curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+			}
+			mark_mode = 0;
+			needs_redraw = 1;
 		}
-		needs_redraw = 1;
 		break;
 
-	case ' ':
-		if(curfile->dot.r.p1 == curfile->dot.r.p2){
-			curfile->dot.r.p1 = buf_cursor;
-			curfile->dot.r.p2 = buf_cursor;
-		}else{
-			if(buf_cursor < curfile->dot.r.p1)
-				curfile->dot.r.p1 = buf_cursor;
-			else
-				curfile->dot.r.p2 = buf_cursor;
-		}
-		needs_redraw = 1;
-		break;
-
-	case 7:  /* Ctrl-G */
+	case 7:  /* Ctrl-G - cancel mark/selection */
+		mark_mode = 0;
 		curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
 		needs_redraw = 1;
 		break;
 
-	case 23:  /* Ctrl-W */
-		if(curfile->dot.r.p1 != curfile->dot.r.p2)
+	case 23:  /* Ctrl-W - kill region (cut selection) */
+		if(curfile->dot.r.p1 != curfile->dot.r.p2){
+			/* Snarf the selection first */
 			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
+			/* Delete it */
+			logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
+			if(fileupdate(curfile, FALSE, FALSE))
+				seq++;
+			buf_cursor = curfile->dot.r.p1;
+			curfile->dot.r.p2 = curfile->dot.r.p1;
+			needs_redraw = 1;
+		}
+		mark_mode = 0;
 		break;
 
-	case 25:  /* Ctrl-Y */
+	case 25:  /* Ctrl-Y - paste */
 		if(snarfbuf.nc > 0){
-			Posn l, m;
-			char cmd[64];
-			snprint(cmd, sizeof cmd, "#%ld,#%lda/", buf_cursor, buf_cursor);
-			queue_string(cmd);
+			Posn p0, l, m;
+			Rune *buf;
+
+			/* Delete selection first if any */
+			if(curfile->dot.r.p1 != curfile->dot.r.p2){
+				p0 = curfile->dot.r.p1;
+				logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
+			}else{
+				p0 = buf_cursor;
+			}
+
+			/* Insert snarfbuf contents */
+			buf = fbufalloc();
 			for(l = 0; l < snarfbuf.nc; l += m){
 				m = snarfbuf.nc - l;
-				if(m > BLOCKSIZE)
-					m = BLOCKSIZE;
-				bufread(&snarfbuf, l, genbuf, m);
-				for(Posn k = 0; k < m; k++){
-					if(genbuf[k] == '/')
-						queue_char('\\');
-					queue_char(genbuf[k]);
-				}
+				if(m > RBUFSIZE)
+					m = RBUFSIZE;
+				bufread(&snarfbuf, l, buf, m);
+				loginsert(curfile, p0 + l, buf, m);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
 			}
-			queue_string("/\n");
-			exit_bufmode();
+			fbuffree(buf);
+
+			buf_cursor = p0 + snarfbuf.nc;
+			curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+			mark_mode = 0;
+			needs_redraw = 1;
 		}
 		break;
 
@@ -708,8 +777,168 @@ handle_bufkey(int key)
 		needs_redraw = 1;
 		break;
 
-	default:
+	case KEY_DEL:  /* Delete key - delete char after cursor or selection */
+		{
+			Posn p0, p1;
+			if(curfile->dot.r.p1 != curfile->dot.r.p2){
+				/* Delete selection */
+				p0 = curfile->dot.r.p1;
+				p1 = curfile->dot.r.p2;
+			}else if(buf_cursor < curfile->b.nc){
+				/* Delete char after cursor */
+				p0 = buf_cursor;
+				p1 = buf_cursor + 1;
+			}else{
+				break;
+			}
+			logdelete(curfile, p0, p1);
+			if(fileupdate(curfile, FALSE, FALSE))
+				seq++;
+			buf_cursor = p0;
+			curfile->dot.r.p1 = curfile->dot.r.p2 = p0;
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
 		break;
+
+	case 127:  /* DEL - backspace */
+	case 8:    /* Ctrl-H - backspace */
+		{
+			Posn p0, p1;
+			if(curfile->dot.r.p1 != curfile->dot.r.p2){
+				/* Delete selection */
+				p0 = curfile->dot.r.p1;
+				p1 = curfile->dot.r.p2;
+			}else if(buf_cursor > 0){
+				/* Delete char before cursor */
+				p0 = buf_cursor - 1;
+				p1 = buf_cursor;
+			}else{
+				break;
+			}
+			logdelete(curfile, p0, p1);
+			if(fileupdate(curfile, FALSE, FALSE))
+				seq++;
+			buf_cursor = p0;
+			curfile->dot.r.p1 = curfile->dot.r.p2 = p0;
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
+		break;
+
+	case KEY_ALT_BS:  /* Option/Alt + Backspace - delete previous word */
+		{
+			Posn p0, p1;
+			Rune ch;
+			if(curfile->dot.r.p1 != curfile->dot.r.p2){
+				/* Delete selection */
+				p0 = curfile->dot.r.p1;
+				p1 = curfile->dot.r.p2;
+			}else if(buf_cursor > 0){
+				/* Find start of previous word */
+				p1 = buf_cursor;
+				p0 = buf_cursor;
+				/* Skip trailing whitespace */
+				while(p0 > 0){
+					ch = filereadc(curfile, p0 - 1);
+					if(ch != ' ' && ch != '\t' && ch != '\n')
+						break;
+					p0--;
+				}
+				/* Skip word characters */
+				while(p0 > 0){
+					ch = filereadc(curfile, p0 - 1);
+					if(ch == ' ' || ch == '\t' || ch == '\n')
+						break;
+					p0--;
+				}
+				if(p0 == p1)
+					break;
+			}else{
+				break;
+			}
+			logdelete(curfile, p0, p1);
+			if(fileupdate(curfile, FALSE, FALSE))
+				seq++;
+			buf_cursor = p0;
+			curfile->dot.r.p1 = curfile->dot.r.p2 = p0;
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
+		break;
+
+	case 31:  /* Ctrl-/ - undo */
+		{
+			uint p0, p1;
+			if(curfile->delta.nc > 0){
+				fileundo(curfile, TRUE, 1, &p0, &p1, FALSE);
+				buf_cursor = p1;
+				curfile->dot.r.p1 = p0;
+				curfile->dot.r.p2 = p1;
+				mark_mode = 0;
+				needs_redraw = 1;
+			}
+		}
+		break;
+
+	case '\r':
+	case '\n':  /* Enter - insert newline */
+		{
+			Posn p0;
+			Rune nl = '\n';
+			if(curfile->dot.r.p1 != curfile->dot.r.p2){
+				/* Delete selection first, then insert */
+				p0 = curfile->dot.r.p1;
+				logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
+			}else{
+				p0 = buf_cursor;
+			}
+			loginsert(curfile, p0, &nl, 1);
+			if(fileupdate(curfile, FALSE, FALSE))
+				seq++;
+			buf_cursor = p0 + 1;
+			curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
+		break;
+
+	default:
+		/* Printable characters - insert/replace */
+		if(key >= 32 && key < KEY_UP){
+			Posn p0;
+			Rune r = key;
+			if(curfile->dot.r.p1 != curfile->dot.r.p2){
+				/* Delete selection first, then insert */
+				p0 = curfile->dot.r.p1;
+				logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
+			}else{
+				p0 = buf_cursor;
+			}
+			loginsert(curfile, p0, &r, 1);
+			if(fileupdate(curfile, FALSE, FALSE))
+				seq++;
+			buf_cursor = p0 + 1;
+			curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
+		break;
+	}
+
+	/* Update selection if mark mode is active */
+	if(mark_mode && curfile){
+		if(buf_cursor < mark_pos){
+			curfile->dot.r.p1 = buf_cursor;
+			curfile->dot.r.p2 = mark_pos;
+		}else{
+			curfile->dot.r.p1 = mark_pos;
+			curfile->dot.r.p2 = buf_cursor;
+		}
 	}
 
 	if(buf_cursor < 0)
@@ -727,6 +956,7 @@ handle_mouse(void)
 	int btn;
 	Posn p;
 	int row, col;
+	Rune ch;
 
 	c = term_readchar();
 	while(c >= '0' && c <= '9'){
@@ -755,31 +985,59 @@ handle_mouse(void)
 	if(!curfile)
 		return;
 
+	/* Convert screen position (x, y) to file position p */
+	/* Account for tab width when calculating column */
 	p = buf_origin;
 	row = 0;
 	col = 0;
 
+	/* Find the right row */
 	while(row < y && p < curfile->b.nc){
-		if(filereadc(curfile, p) == '\n'){
+		ch = filereadc(curfile, p);
+		if(ch == '\n'){
 			row++;
 			col = 0;
-		}else{
-			col++;
 		}
 		p++;
 	}
 
+	/* Find the right column, accounting for tab width */
+	col = 0;
 	while(col < x && p < curfile->b.nc){
-		Rune ch = filereadc(curfile, p);
+		ch = filereadc(curfile, p);
 		if(ch == '\n')
 			break;
-		col++;
-		p++;
+		if(ch == '\t'){
+			col += 8 - (col % 8);
+		}else if(ch < 32){
+			col += 2;  /* control chars displayed as ^X */
+		}else{
+			col++;
+		}
+		if(col <= x)  /* only advance p if we haven't passed target */
+			p++;
 	}
 
 	btn = button & 3;
 
-	if(btn == 0){
+	/* Check for motion events first (button 32-35 are motion with button held) */
+	if(button >= 32 && button < 64){
+		/* Mouse motion while button held (drag) */
+		if(mouse_selecting){
+			mouse_sel_end = p;
+			buf_cursor = p;
+			/* Update selection live during drag */
+			if(mouse_sel_start <= mouse_sel_end){
+				curfile->dot.r.p1 = mouse_sel_start;
+				curfile->dot.r.p2 = mouse_sel_end;
+			}else{
+				curfile->dot.r.p1 = mouse_sel_end;
+				curfile->dot.r.p2 = mouse_sel_start;
+			}
+			needs_redraw = 1;
+		}
+	}else if(btn == 0){
+		/* Left button press/release */
 		if(pressed){
 			mouse_selecting = 1;
 			mouse_sel_start = p;
@@ -788,6 +1046,7 @@ handle_mouse(void)
 			curfile->dot.r.p1 = p;
 			curfile->dot.r.p2 = p;
 		}else{
+			/* Left button release */
 			if(mouse_selecting){
 				mouse_selecting = 0;
 				mouse_sel_end = p;
@@ -821,42 +1080,143 @@ handle_mouse(void)
 }
 
 /*
+ * Read a full rune from stdin (for command mode).
+ */
+static Rune
+cmd_readrune(void)
+{
+	int n, nbuf;
+	char buf[UTFmax];
+	Rune r;
+
+	nbuf = 0;
+	do{
+		n = read(0, buf+nbuf, 1);
+		if(n <= 0)
+			return (Rune)-1;
+		nbuf += n;
+	}while(!fullrune(buf, nbuf));
+	chartorune(&r, buf);
+	return r;
+}
+
+/*
+ * Echo a rune to stdout (for command mode line editing).
+ */
+static void
+cmd_echorune(Rune r)
+{
+	char buf[UTFmax];
+	int n;
+
+	n = runetochar(buf, &r);
+	write(1, buf, n);
+}
+
+/*
  * Main input function for terminal mode.
- * In command mode: read normally, check for ESC to enter buffer mode.
+ * In command mode: handle line editing, check for ESC to enter buffer mode.
  * In buffer mode: handle navigation keys.
  */
 int
 terminputc(void)
 {
 	int key;
-	int n, nbuf;
-	char buf[UTFmax];
 	Rune r;
 
-	/* Return queued characters first */
+	/* Return queued characters first (from buffer mode operations) */
 	if(!queue_empty())
 		return dequeue_char();
 
-	if(viewmode == ModeCmd){
-		/* Command mode: read like normal -d mode */
-		/* But check for ESC to enter buffer mode */
-		nbuf = 0;
-		do{
-			n = read(0, buf+nbuf, 1);
-			if(n <= 0)
-				return -1;
-			nbuf += n;
-		}while(!fullrune(buf, nbuf));
-		chartorune(&r, buf);
+	/* If we have a completed line, return characters from it */
+	if(linedone){
+		if(linepos < linelen){
+			return linebuf[linepos++];
+		}
+		/* Line fully returned, reset */
+		linedone = 0;
+		linelen = 0;
+		linepos = 0;
+	}
 
-		if(r == 27){  /* ESC */
-			enter_bufmode();
-			/* Now in buffer mode - fall through to handle it */
-		}else{
-			return r;
+	if(viewmode == ModeCmd){
+		/* Command mode: line editing with immediate ESC detection */
+		for(;;){
+			r = cmd_readrune();
+			if(r == (Rune)-1)
+				return -1;
+
+			switch(r){
+			case 27:  /* ESC */
+				enter_bufmode();
+				goto bufmode;
+
+			case '\r':
+			case '\n':  /* Enter - submit line */
+				linebuf[linelen++] = '\n';
+				cmd_echorune('\n');
+				linedone = 1;
+				linepos = 0;
+				if(linelen > 0)
+					return linebuf[linepos++];
+				return '\n';
+
+			case 127:  /* DEL - backspace */
+			case 8:    /* Ctrl-H - backspace */
+				if(linelen > 0){
+					linelen--;
+					write(1, "\b \b", 3);
+				}
+				break;
+
+			case 21:  /* Ctrl-U - kill line */
+				while(linelen > 0){
+					linelen--;
+					write(1, "\b \b", 3);
+				}
+				break;
+
+			case 23:  /* Ctrl-W - kill word */
+				/* Skip trailing spaces */
+				while(linelen > 0 && linebuf[linelen-1] == ' '){
+					linelen--;
+					write(1, "\b \b", 3);
+				}
+				/* Delete word */
+				while(linelen > 0 && linebuf[linelen-1] != ' '){
+					linelen--;
+					write(1, "\b \b", 3);
+				}
+				break;
+
+			case 3:  /* Ctrl-C - interrupt */
+				/* Clear line and return newline to cancel current input */
+				write(1, "^C\n", 3);
+				linelen = 0;
+				linepos = 0;
+				linedone = 0;
+				return '\n';
+
+			case 4:  /* Ctrl-D - EOF if line is empty */
+				if(linelen == 0)
+					return -1;
+				break;
+
+			default:
+				if(r >= 32 || r == '\t'){
+					/* Printable character or tab */
+					if(linelen < (int)(sizeof(linebuf)/sizeof(linebuf[0])) - 1){
+						linebuf[linelen++] = r;
+						cmd_echorune(r);
+					}
+				}
+				/* Ignore other control characters */
+				break;
+			}
 		}
 	}
 
+bufmode:
 	/* Buffer mode */
 	for(;;){
 		if(needs_redraw){
@@ -875,12 +1235,12 @@ terminputc(void)
 
 		handle_bufkey(key);
 
-		/* If we exited buffer mode, check for queued chars or read next */
-		if(viewmode == ModeCmd){
-			if(!queue_empty())
-				return dequeue_char();
-			/* Recursively call to read next command char */
+		/* If we have queued commands, return them to sam for processing */
+		if(!queue_empty())
+			return dequeue_char();
+
+		/* If we exited buffer mode, read next command char */
+		if(viewmode == ModeCmd)
 			return terminputc();
-		}
 	}
 }
