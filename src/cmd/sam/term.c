@@ -11,11 +11,20 @@
  */
 
 /* Include system headers before plan9port headers to avoid conflicts */
+
+/*
+ * Enable POSIX and X/Open features for wcwidth().
+ * Plan9port headers may redefine this, so we set it early.
+ */
+#define _XOPEN_SOURCE 700
+
 #include <stdio.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <termios.h>
 #include <signal.h>
+#include <wchar.h>
+#include <locale.h>
 
 #include "sam.h"
 
@@ -109,6 +118,7 @@ static void queue_char(Rune c);
 static int dequeue_char(void);
 static int queue_empty(void);
 static void queue_string(char *s);
+static int runewidth(Rune ch);
 static int charwidth(Rune ch, int col);
 static int count_visual_rows(Posn from, Posn to);
 static void save_file_state(File *f);
@@ -296,6 +306,9 @@ terminit(void)
 		return;
 	}
 
+	/* Initialize locale for proper wcwidth() support */
+	setlocale(LC_CTYPE, "");
+
 	termmode = 1;
 	viewmode = ModeCmd;
 	inputhead = inputtail = 0;
@@ -459,12 +472,52 @@ term_readchar_timeout(int timeout_ms)
 	return c;
 }
 
+/*
+ * Read a UTF-8 character from raw mode input.
+ * Returns the full Rune value for multi-byte UTF-8 sequences.
+ */
+static int
+term_readutf8(int first_byte)
+{
+	char buf[UTFmax];
+	int nbuf = 1;
+	Rune r;
+
+	buf[0] = first_byte;
+
+	/* Check if this is a UTF-8 lead byte */
+	if((first_byte & 0x80) == 0){
+		/* ASCII - single byte */
+		return first_byte;
+	}
+
+	/* Multi-byte UTF-8: read remaining bytes */
+	while(!fullrune(buf, nbuf) && nbuf < UTFmax){
+		int c = term_readchar_timeout(50);
+		if(c < 0)
+			break;
+		buf[nbuf++] = c;
+	}
+
+	if(fullrune(buf, nbuf)){
+		chartorune(&r, buf);
+		return (int)r;
+	}
+
+	/* Invalid UTF-8, return first byte */
+	return first_byte;
+}
+
 static int
 term_readkey(void)
 {
 	int c = term_readchar();
 	if(c < 0)
 		return -1;
+
+	/* Check for UTF-8 multi-byte sequence (non-ASCII, non-escape) */
+	if(c >= 0x80)
+		return term_readutf8(c);
 
 	if(c != 27)
 		return c;
@@ -622,7 +675,35 @@ buf_scrollto(Posn p)
 }
 
 /*
- * Calculate the visual column width of a character.
+ * Calculate the display width of a Unicode character.
+ * Uses wcwidth() for proper Unicode support (CJK, emoji, combining chars).
+ * Returns:
+ *   0 for combining characters and zero-width chars
+ *   1 for most characters
+ *   2 for wide characters (CJK, emoji, etc.)
+ */
+static int
+runewidth(Rune ch)
+{
+	int w;
+
+	/* ASCII fast path */
+	if(ch < 0x80){
+		if(ch < 32 || ch == 127)
+			return 0;  /* Control characters handled separately */
+		return 1;
+	}
+
+	/* Use wcwidth for Unicode characters */
+	w = wcwidth((wchar_t)ch);
+	if(w < 0)
+		return 1;  /* Non-printable or unknown - assume width 1 */
+	return w;
+}
+
+/*
+ * Calculate the visual column width of a character for display purposes.
+ * Handles tabs and control characters specially.
  */
 static int
 charwidth(Rune ch, int col)
@@ -630,8 +711,10 @@ charwidth(Rune ch, int col)
 	if(ch == '\t')
 		return 8 - (col % 8);
 	if(ch < 32)
-		return 2;  /* ^X */
-	return 1;
+		return 2;  /* ^X - control char display format */
+	if(ch == 127)
+		return 2;  /* ^? */
+	return runewidth(ch);
 }
 
 /*
@@ -1260,8 +1343,14 @@ handle_bufkey(int key)
 		break;
 
 	default:
-		/* Printable characters - insert/replace */
-		if(key >= 32 && key < KEY_UP){
+		/*
+		 * Printable characters - insert/replace
+		 * Allow Unicode: anything >= 32 that isn't a special key code.
+		 * Special key codes are 0x100-0x2FF (KEY_UP through KEY_MOUSE range).
+		 * Unicode codepoints below 0x100 are allowed (Latin-1 supplement).
+		 * Unicode codepoints 0x300+ are allowed (most of Unicode).
+		 */
+		if(key >= 32 && (key < 0x100 || key >= 0x300)){
 			Posn p0;
 			Rune r = key;
 			if(curfile->dot.r.p1 != curfile->dot.r.p2){
