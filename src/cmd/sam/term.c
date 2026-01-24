@@ -1,18 +1,22 @@
 /*
- * Terminal mode interface for sam (-t flag)
+ * Terminal mode interface for sam -d flag
  *
- * Provides a text-based interface with two modes:
- * - Command mode: enter sam commands (like -d mode)
- * - Buffer mode: view/navigate file content with emacs-like keys
+ * When running sam -d with a tty, provides enhanced terminal features:
+ * - Starts in command mode (like regular -d)
+ * - Press ESC to toggle to buffer mode (view file content)
+ * - Buffer mode supports emacs-like navigation and mouse selection
+ * - Press ESC again to return to command mode
  *
- * Escape key toggles between modes.
- * Mouse selection is supported for text selection.
+ * If stdin is not a tty, behaves like regular -d mode.
  */
 
 #include "sam.h"
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <signal.h>
+
+/* Global: terminal mode active (exported to sam.h) */
+int	termmode = 0;
 
 /* Terminal mode states */
 enum {
@@ -22,7 +26,7 @@ enum {
 
 /* Terminal state */
 static struct termios orig_termios;
-static int term_mode = ModeCmd;
+static int viewmode = ModeCmd;	/* current view: command or buffer */
 static int term_rows = 24;
 static int term_cols = 80;
 static int term_raw = 0;
@@ -70,7 +74,7 @@ static void term_status(char *msg);
 static int term_readkey(void);
 static void draw_cmdmode(void);
 static void draw_bufmode(void);
-static void handle_cmdkey(int key);
+static int handle_cmdkey(int key);
 static void handle_bufkey(int key);
 static void handle_mouse(void);
 static Posn file_linestart(File *f, Posn p);
@@ -230,9 +234,20 @@ termcleanup(void)
 	}
 }
 
+/*
+ * Initialize terminal mode if stdin is a tty.
+ * Called from main() when -d flag is set.
+ */
 void
-termstartup(void)
+terminit(void)
 {
+	/* Check if stdin is a tty */
+	if(!isatty(0)){
+		termmode = 0;
+		return;
+	}
+
+	termmode = 1;
 	signal(SIGWINCH, sigwinch_handler);
 
 	term_getsize();
@@ -246,11 +261,10 @@ termstartup(void)
 	/* Show cursor */
 	term_puts(CSI "?25h");
 
-	term_clear();
 	term_flush();
 
 	/* Start in command mode */
-	term_mode = ModeCmd;
+	viewmode = ModeCmd;
 	inputhead = inputtail = 0;
 	term_initialized = 1;
 
@@ -272,9 +286,10 @@ queue_char(Rune c)
 static int
 dequeue_char(void)
 {
+	int c;
 	if(inputhead == inputtail)
 		return -1;
-	int c = inputqueue[inputhead];
+	c = inputqueue[inputhead];
 	inputhead = (inputhead + 1) % (sizeof(inputqueue)/sizeof(inputqueue[0]));
 	return c;
 }
@@ -644,7 +659,7 @@ termdraw(void)
 	if(!term_raw)
 		return;
 
-	if(term_mode == ModeCmd)
+	if(viewmode == ModeCmd)
 		draw_cmdmode();
 	else
 		draw_bufmode();
@@ -652,44 +667,22 @@ termdraw(void)
 	needs_redraw = 0;
 }
 
-static void
+/*
+ * Handle key in command mode.
+ * Returns 1 if key was consumed (ESC to switch mode), 0 otherwise.
+ */
+static int
 handle_cmdkey(int key)
 {
-	switch(key){
-	case KEY_ESC:
+	if(key == KEY_ESC){
 		/* Switch to buffer mode */
-		term_mode = ModeBuf;
+		viewmode = ModeBuf;
 		if(curfile)
 			buf_cursor = curfile->dot.r.p1;
 		needs_redraw = 1;
-		break;
-
-	case '\r':
-	case '\n':
-		/* Submit newline to sam */
-		queue_char('\n');
-		break;
-
-	case 127:  /* backspace */
-	case '\b':
-		/* Can't un-type in sam, just ignore */
-		break;
-
-	case 3:  /* Ctrl-C */
-		/* Interrupt - do nothing special */
-		break;
-
-	case 4:  /* Ctrl-D at empty line = quit */
-		queue_char('q');
-		queue_char('\n');
-		break;
-
-	default:
-		if(key >= 32 && key < 127){
-			queue_char(key);
-		}
-		break;
+		return 1;  /* consumed */
 	}
+	return 0;  /* not consumed - pass through */
 }
 
 static void
@@ -700,7 +693,7 @@ handle_bufkey(int key)
 
 	if(!curfile){
 		if(key == KEY_ESC){
-			term_mode = ModeCmd;
+			viewmode = ModeCmd;
 			needs_redraw = 1;
 		}
 		return;
@@ -709,7 +702,7 @@ handle_bufkey(int key)
 	switch(key){
 	case KEY_ESC:
 		/* Switch to command mode, update dot */
-		term_mode = ModeCmd;
+		viewmode = ModeCmd;
 		curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
 		needs_redraw = 1;
 		break;
@@ -835,7 +828,7 @@ handle_bufkey(int key)
 				}
 			}
 			queue_string("/\n");
-			term_mode = ModeCmd;  /* Switch to process command */
+			viewmode = ModeCmd;  /* Switch to process command */
 			needs_redraw = 1;
 		}
 		break;
@@ -904,7 +897,7 @@ handle_mouse(void)
 	y--;
 
 	/* Only handle in buffer mode */
-	if(term_mode != ModeBuf || !curfile)
+	if(viewmode != ModeBuf || !curfile)
 		return;
 
 	/* Convert screen position to file position */
@@ -976,7 +969,7 @@ handle_mouse(void)
 
 /*
  * Main input function for terminal mode.
- * Called from inputc() in cmd.c when tflag is set.
+ * Called from inputc() in cmd.c when termmode is set.
  * Returns characters one at a time to the command parser.
  */
 int
@@ -1002,25 +995,26 @@ terminputc(void)
 			continue;
 		}
 
-		if(term_mode == ModeCmd){
-			handle_cmdkey(key);
-			/* Check if we have characters to return */
-			if(!queue_empty())
-				return dequeue_char();
+		if(viewmode == ModeCmd){
+			/* In command mode, check for ESC to switch to buffer mode */
+			if(handle_cmdkey(key))
+				continue;  /* ESC was consumed, loop back */
+
+			/* Pass through other keys to sam */
+			/* Handle special keys */
+			if(key >= KEY_UP){
+				/* Arrow keys, etc - ignore in command mode */
+				continue;
+			}
+
+			/* Regular character - return it */
+			return key;
 		}else{
+			/* Buffer mode - handle navigation */
 			handle_bufkey(key);
-			/* Check if mode switched and has commands */
+			/* Check if we have commands queued (e.g., from paste) */
 			if(!queue_empty())
 				return dequeue_char();
 		}
 	}
-}
-
-/*
- * Command loop for terminal mode.
- */
-void
-termcmdloop(void)
-{
-	termdraw();
 }

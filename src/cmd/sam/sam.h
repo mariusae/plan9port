@@ -393,14 +393,13 @@ extern int	panicking;
 extern Rune	empty[];
 extern int	termlocked;
 extern int	outbuffered;
-extern int	tflag;
 
-/* term.c - terminal mode interface */
-void	termstartup(void);
-void	termcmdloop(void);
-int	terminputc(void);
-void	termdraw(void);
-void	termcleanup(void);
+/* term.c - terminal mode interface for -d flag */
+extern int	termmode;	/* terminal mode active (tty detected) */
+void	terminit(void);		/* initialize if stdin is a tty */
+int	terminputc(void);	/* get input char, handle ESC for buffer mode */
+void	termdraw(void);		/* redraw terminal display */
+void	termcleanup(void);	/* restore terminal state */
 
 #include "mesg.h"
 

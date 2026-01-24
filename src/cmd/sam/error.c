@@ -139,7 +139,7 @@ termwrite(char *s)
 			Strinsert(&cmdstr, p, cmdstr.n);
 		cmdptadv += p->n;
 		freetmpstr(p);
-	}else if(tflag){
+	}else if(termmode){
 		/* Terminal mode - write to cmd buffer for display */
 		p = tmpcstr(s);
 		if(cmd){
