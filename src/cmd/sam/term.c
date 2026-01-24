@@ -99,7 +99,8 @@ static int linedone = 0; /* line is complete, return chars from linebuf */
 #define KEY_ALT_C	0x10a  /* Alt/Option + C - copy */
 #define KEY_ALT_V	0x10b  /* Alt/Option + V - page up (Meta-V) */
 #define KEY_ALT_X	0x10c  /* Alt/Option + X - cut to clipboard */
-#define KEY_PASTE	0x10d  /* Bracketed paste start */
+#define KEY_ALT_W	0x10d  /* Alt/Option + W - copy to clipboard (Emacs-style) */
+#define KEY_PASTE	0x10e  /* Bracketed paste start */
 
 /* Forward declarations */
 static void enter_bufmode(void);
@@ -560,6 +561,10 @@ term_readkey(void)
 	/* Alt/Option + X - cut to clipboard */
 	if(c == 'x')
 		return KEY_ALT_X;
+
+	/* Alt/Option + W - copy to clipboard (Emacs-style) */
+	if(c == 'w')
+		return KEY_ALT_W;
 
 	if(c == '['){
 		c = term_readchar();
@@ -1525,7 +1530,9 @@ handle_bufkey(int key)
 		needs_redraw = 1;
 		break;
 
+	case 3:          /* Ctrl+C - copy to system clipboard */
 	case KEY_ALT_C:  /* Alt+C - copy to system clipboard */
+	case KEY_ALT_W:  /* Alt+W - copy to system clipboard (Emacs-style) */
 		if(curfile->dot.r.p1 != curfile->dot.r.p2)
 			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
 		break;
