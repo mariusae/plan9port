@@ -1520,7 +1520,6 @@ static void
 handle_bufkey(int key)
 {
 	int i;
-	Posn tmp;
 
 	if(!curfile){
 		if(key == KEY_ESC)
@@ -1548,13 +1547,13 @@ handle_bufkey(int key)
 		break;
 
 	case KEY_UP:
-	case 16:  /* Ctrl-P */
+	case 16:  /* Ctrl-P - move up (Emacs-style) */
 		buf_cursor = move_visual_up(buf_cursor);
 		needs_redraw = 1;
 		break;
 
 	case KEY_DOWN:
-	case 14:  /* Ctrl-N */
+	case 14:  /* Ctrl-N - move down (Emacs-style) */
 		buf_cursor = move_visual_down(buf_cursor);
 		if(buf_cursor > curfile->b.nc)
 			buf_cursor = curfile->b.nc;
@@ -1562,14 +1561,14 @@ handle_bufkey(int key)
 		break;
 
 	case KEY_LEFT:
-	case 2:  /* Ctrl-B */
+	case 2:  /* Ctrl-B - move left (Emacs-style) */
 		if(buf_cursor > 0)
 			buf_cursor--;
 		needs_redraw = 1;
 		break;
 
 	case KEY_RIGHT:
-	case 6:  /* Ctrl-F */
+	case 6:  /* Ctrl-F - move right (Emacs-style) */
 		if(buf_cursor < curfile->b.nc)
 			buf_cursor++;
 		needs_redraw = 1;
@@ -1646,7 +1645,6 @@ handle_bufkey(int key)
 		break;
 
 	case KEY_PGDN:
-	case 22:  /* Ctrl-V */
 		for(i = 0; i < term_rows; i++){
 			buf_cursor = file_nextline(curfile, buf_cursor);
 			if(buf_cursor >= curfile->b.nc){
@@ -1788,16 +1786,20 @@ handle_bufkey(int key)
 		}
 		break;
 
-	case 24:  /* Ctrl-X */
-		tmp = curfile->dot.r.p1;
-		curfile->dot.r.p1 = buf_cursor;
-		buf_cursor = tmp;
-		if(curfile->dot.r.p1 > curfile->dot.r.p2){
-			tmp = curfile->dot.r.p1;
-			curfile->dot.r.p1 = curfile->dot.r.p2;
-			curfile->dot.r.p2 = tmp;
+	case 24:  /* Ctrl-X - cut selection */
+		if(curfile->dot.r.p1 != curfile->dot.r.p2){
+			/* Copy to internal clipboard and system clipboard */
+			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
+			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
+			/* Delete the selection */
+			logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
+			if(fileupdate(curfile, FALSE, FALSE))
+				seq++;
+			buf_cursor = curfile->dot.r.p1;
+			curfile->dot.r.p2 = curfile->dot.r.p1;
+			mark_mode = 0;
+			needs_redraw = 1;
 		}
-		needs_redraw = 1;
 		break;
 
 	case 3:          /* Ctrl+C - copy to system clipboard */
@@ -1879,8 +1881,7 @@ handle_bufkey(int key)
 		}
 		break;
 
-	case 127:  /* DEL - backspace */
-	case 8:    /* Ctrl-H - backspace */
+	case 127:  /* DEL/Backspace - delete char before cursor */
 		{
 			Posn p0, p1;
 			if(curfile->dot.r.p1 != curfile->dot.r.p2){
@@ -1945,6 +1946,7 @@ handle_bufkey(int key)
 		}
 		break;
 
+	case 26:  /* Ctrl-Z - undo */
 	case 31:  /* Ctrl-/ - undo */
 		{
 			uint p0, p1;
@@ -1959,8 +1961,7 @@ handle_bufkey(int key)
 		}
 		break;
 
-	case '\r':
-	case '\n':  /* Enter - insert newline */
+	case '\r':  /* Enter - insert newline */
 		{
 			Posn p0;
 			Rune nl = '\n';
