@@ -62,6 +62,11 @@ static Posn mark_pos = 0;      /* Position where mark was set */
 static char status_msg[256];
 static struct timeval status_expire = {0, 0};
 
+/* Output capture for buffer mode operations (e.g., Ctrl-S write) */
+static char capture_buf[1024];
+static int capture_len = 0;
+static int capturing = 0;
+
 /* Per-file view state */
 #define MAX_FILE_STATES 64
 static struct {
@@ -432,6 +437,99 @@ int
 in_bufmode(void)
 {
 	return termmode && viewmode == ModeBuf;
+}
+
+/*
+ * Start capturing output for buffer mode display.
+ */
+void
+bufmode_capture_start(void)
+{
+	capture_len = 0;
+	capture_buf[0] = '\0';
+	capturing = 1;
+}
+
+/*
+ * End capture and return the captured string (or NULL if nothing captured).
+ * Strips trailing newline if present.
+ */
+char*
+bufmode_capture_end(void)
+{
+	capturing = 0;
+	if(capture_len == 0)
+		return nil;
+	/* Strip trailing newline */
+	while(capture_len > 0 && (capture_buf[capture_len-1] == '\n' || capture_buf[capture_len-1] == '\r'))
+		capture_buf[--capture_len] = '\0';
+	if(capture_len == 0)
+		return nil;
+	return capture_buf;
+}
+
+/*
+ * Append to capture buffer (called from termwrite when capturing).
+ * Returns 1 if capturing, 0 otherwise.
+ */
+int
+bufmode_capture_append(char *s)
+{
+	int len;
+	if(!capturing)
+		return 0;
+	len = strlen(s);
+	if(capture_len + len >= (int)sizeof(capture_buf) - 1)
+		len = sizeof(capture_buf) - 1 - capture_len;
+	if(len > 0){
+		memcpy(capture_buf + capture_len, s, len);
+		capture_len += len;
+		capture_buf[capture_len] = '\0';
+	}
+	return 1;
+}
+
+/*
+ * Display a message inverted at the bottom of the screen (just the message length,
+ * not a full status bar), then wait for any key or mouse event before continuing.
+ * This is used to show output from operations like Ctrl-S write.
+ */
+static void
+show_output_and_wait(char *msg)
+{
+	int key, slen;
+
+	if(!msg || !msg[0])
+		return;
+
+	/* Draw the buffer first */
+	draw_bufmode();
+
+	/* Draw the message inverted at bottom, just the message length */
+	term_goto(term_rows - 1, 0);
+	term_puts(CSI "7m");  /* inverse video */
+	slen = strlen(msg);
+	if(slen > term_cols)
+		slen = term_cols;
+	term_write(msg, slen);
+	term_puts(CSI "0m");  /* reset */
+	term_flush();
+
+	/* Wait for any key or mouse event */
+	for(;;){
+		key = term_readkey();
+		if(key < 0)
+			break;
+		/* Any key or mouse event dismisses the message */
+		if(key == KEY_MOUSE){
+			/* Consume the mouse event data but don't process it */
+			break;
+		}
+		break;
+	}
+
+	/* Redraw normally */
+	needs_redraw = 1;
 }
 
 /*
@@ -1621,12 +1719,17 @@ handle_bufkey(int key)
 			queue_string("w ");
 		}else{
 			Address save_addr = addr;
+			char *output;
 			addr.r.p1 = 0;
 			addr.r.p2 = curfile->b.nc;
 			addr.f = curfile;
 			getname(curfile, 0, FALSE);
+			bufmode_capture_start();
 			writef(curfile);
+			output = bufmode_capture_end();
 			addr = save_addr;
+			if(output)
+				show_output_and_wait(output);
 		}
 		break;
 

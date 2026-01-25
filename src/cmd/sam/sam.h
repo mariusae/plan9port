@@ -401,6 +401,9 @@ int	terminputc(void);	/* get input char, handle ESC for buffer mode */
 void	termdraw(void);		/* redraw terminal display */
 void	termcleanup(void);	/* restore terminal state */
 int	in_bufmode(void);	/* check if in buffer mode (for suppressing output) */
+void	bufmode_capture_start(void);	/* start capturing output for buffer mode display */
+char*	bufmode_capture_end(void);	/* end capture and return captured string */
+int	bufmode_capture_append(char*);	/* append to capture buffer, returns 1 if capturing */
 
 #include "mesg.h"
 
