@@ -1450,13 +1450,13 @@ handle_bufkey(int key)
 		break;
 
 	case KEY_UP:
-	case 16:  /* Ctrl-P */
+	case 11:  /* Ctrl-K - move up */
 		buf_cursor = move_visual_up(buf_cursor);
 		needs_redraw = 1;
 		break;
 
 	case KEY_DOWN:
-	case 14:  /* Ctrl-N */
+	case 10:  /* Ctrl-J - move down */
 		buf_cursor = move_visual_down(buf_cursor);
 		if(buf_cursor > curfile->b.nc)
 			buf_cursor = curfile->b.nc;
@@ -1464,14 +1464,14 @@ handle_bufkey(int key)
 		break;
 
 	case KEY_LEFT:
-	case 2:  /* Ctrl-B */
+	case 8:  /* Ctrl-H - move left */
 		if(buf_cursor > 0)
 			buf_cursor--;
 		needs_redraw = 1;
 		break;
 
 	case KEY_RIGHT:
-	case 6:  /* Ctrl-F */
+	case 12:  /* Ctrl-L - move right */
 		if(buf_cursor < curfile->b.nc)
 			buf_cursor++;
 		needs_redraw = 1;
@@ -1548,7 +1548,6 @@ handle_bufkey(int key)
 		break;
 
 	case KEY_PGDN:
-	case 22:  /* Ctrl-V */
 		for(i = 0; i < term_rows; i++){
 			buf_cursor = file_nextline(curfile, buf_cursor);
 			if(buf_cursor >= curfile->b.nc){
@@ -1559,98 +1558,7 @@ handle_bufkey(int key)
 		needs_redraw = 1;
 		break;
 
-	case 21:  /* Ctrl-U - kill to beginning of line */
-		{
-			Posn linestart = file_linestart(curfile, buf_cursor);
-			if(linestart < buf_cursor){
-				/* Snarf the text first */
-				snarf(curfile, linestart, buf_cursor, &snarfbuf, 0);
-				/* Delete it */
-				logdelete(curfile, linestart, buf_cursor);
-				if(fileupdate(curfile, FALSE, FALSE))
-					seq++;
-				buf_cursor = linestart;
-				curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
-			}
-			mark_mode = 0;
-			needs_redraw = 1;
-		}
-		break;
-
-	case 11:  /* Ctrl-K - kill to end of line */
-		{
-			Posn lineend = file_lineend(curfile, buf_cursor);
-			if(buf_cursor < lineend){
-				/* Snarf the text first */
-				snarf(curfile, buf_cursor, lineend, &snarfbuf, 0);
-				/* Delete it */
-				logdelete(curfile, buf_cursor, lineend);
-				if(fileupdate(curfile, FALSE, FALSE))
-					seq++;
-				curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
-			}else if(buf_cursor < curfile->b.nc){
-				/* At end of line but not end of file - delete the newline */
-				logdelete(curfile, buf_cursor, buf_cursor + 1);
-				if(fileupdate(curfile, FALSE, FALSE))
-					seq++;
-				curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
-			}
-			mark_mode = 0;
-			needs_redraw = 1;
-		}
-		break;
-
-	case 7:  /* Ctrl-G - exit buffer mode (same as ESC) */
-		exit_bufmode();
-		break;
-
-	case 12:  /* Ctrl-L - look (find next occurrence of selection) */
-		if(look_forward())
-			needs_redraw = 1;
-		break;
-
-	case 18:  /* Ctrl-R - reverse look (find previous occurrence of selection) */
-		if(look_backward())
-			needs_redraw = 1;
-		break;
-
-	case 19:  /* Ctrl-S - save (write file in background, stay in buffer mode) */
-		if(curfile->name.s[0] == 0){
-			/* No filename - need to exit to command mode */
-			exit_bufmode();
-			queue_string("w ");
-		}else{
-			Address save_addr = addr;
-			addr.r.p1 = 0;
-			addr.r.p2 = curfile->b.nc;
-			addr.f = curfile;
-			getname(curfile, 0, FALSE);
-			writef(curfile);
-			addr = save_addr;
-		}
-		break;
-
-	case 17:  /* Ctrl-Q - quit (return to command mode, issue 'q' command) */
-		exit_bufmode();
-		queue_string("q\n");
-		break;
-
-	case 23:  /* Ctrl-W - kill region (cut selection) */
-		if(curfile->dot.r.p1 != curfile->dot.r.p2){
-			/* Snarf the selection first */
-			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
-			/* Delete it */
-			logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
-			if(fileupdate(curfile, FALSE, FALSE))
-				seq++;
-			buf_cursor = curfile->dot.r.p1;
-			curfile->dot.r.p2 = curfile->dot.r.p1;
-			needs_redraw = 1;
-		}
-		mark_mode = 0;
-		break;
-
-	case 25:  /* Ctrl-Y - paste */
+	case 22:  /* Ctrl-V - paste */
 		if(snarfbuf.nc > 0){
 			Posn p0, l, m;
 			Rune *buf;
@@ -1685,16 +1593,102 @@ handle_bufkey(int key)
 		}
 		break;
 
-	case 24:  /* Ctrl-X */
-		tmp = curfile->dot.r.p1;
-		curfile->dot.r.p1 = buf_cursor;
-		buf_cursor = tmp;
-		if(curfile->dot.r.p1 > curfile->dot.r.p2){
-			tmp = curfile->dot.r.p1;
-			curfile->dot.r.p1 = curfile->dot.r.p2;
-			curfile->dot.r.p2 = tmp;
+	case 21:  /* Ctrl-U - kill to beginning of line */
+		{
+			Posn linestart = file_linestart(curfile, buf_cursor);
+			if(linestart < buf_cursor){
+				/* Snarf the text first */
+				snarf(curfile, linestart, buf_cursor, &snarfbuf, 0);
+				/* Delete it */
+				logdelete(curfile, linestart, buf_cursor);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
+				buf_cursor = linestart;
+				curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+			}
+			mark_mode = 0;
+			needs_redraw = 1;
 		}
-		needs_redraw = 1;
+		break;
+
+
+	case 7:  /* Ctrl-G - exit buffer mode (same as ESC) */
+		exit_bufmode();
+		break;
+
+
+
+	case 19:  /* Ctrl-S - save (write file in background, stay in buffer mode) */
+		if(curfile->name.s[0] == 0){
+			/* No filename - need to exit to command mode */
+			exit_bufmode();
+			queue_string("w ");
+		}else{
+			Address save_addr = addr;
+			addr.r.p1 = 0;
+			addr.r.p2 = curfile->b.nc;
+			addr.f = curfile;
+			getname(curfile, 0, FALSE);
+			writef(curfile);
+			addr = save_addr;
+		}
+		break;
+
+	case 17:  /* Ctrl-Q - quit (return to command mode, issue 'q' command) */
+		exit_bufmode();
+		queue_string("q\n");
+		break;
+
+	case 23:  /* Ctrl-W - delete previous word */
+		{
+			Posn p0, p1;
+			Rune ch;
+			if(buf_cursor > 0){
+				/* Find start of previous word */
+				p1 = buf_cursor;
+				p0 = buf_cursor;
+				/* Skip whitespace/non-word chars backwards */
+				while(p0 > 0){
+					ch = filereadc(curfile, p0 - 1);
+					if(iswordchar(ch))
+						break;
+					p0--;
+				}
+				/* Skip word chars backwards */
+				while(p0 > 0){
+					ch = filereadc(curfile, p0 - 1);
+					if(!iswordchar(ch))
+						break;
+					p0--;
+				}
+				if(p0 < p1){
+					logdelete(curfile, p0, p1);
+					if(fileupdate(curfile, FALSE, FALSE))
+						seq++;
+					buf_cursor = p0;
+					curfile->dot.r.p1 = curfile->dot.r.p2 = p0;
+				}
+			}
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
+		break;
+
+
+	case 24:  /* Ctrl-X - cut selection */
+		if(curfile->dot.r.p1 != curfile->dot.r.p2){
+			/* Copy to internal clipboard and system clipboard */
+			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
+			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
+			/* Delete the selection */
+			logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
+			if(fileupdate(curfile, FALSE, FALSE))
+				seq++;
+			buf_cursor = curfile->dot.r.p1;
+			curfile->dot.r.p2 = curfile->dot.r.p1;
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
 		break;
 
 	case 3:          /* Ctrl+C - copy to system clipboard */
@@ -1776,8 +1770,7 @@ handle_bufkey(int key)
 		}
 		break;
 
-	case 127:  /* DEL - backspace */
-	case 8:    /* Ctrl-H - backspace */
+	case 127:  /* DEL/Backspace - delete char before cursor */
 		{
 			Posn p0, p1;
 			if(curfile->dot.r.p1 != curfile->dot.r.p2){
@@ -1842,6 +1835,7 @@ handle_bufkey(int key)
 		}
 		break;
 
+	case 26:  /* Ctrl-Z - undo */
 	case 31:  /* Ctrl-/ - undo */
 		{
 			uint p0, p1;
@@ -1856,8 +1850,7 @@ handle_bufkey(int key)
 		}
 		break;
 
-	case '\r':
-	case '\n':  /* Enter - insert newline */
+	case '\r':  /* Enter - insert newline */
 		{
 			Posn p0;
 			Rune nl = '\n';
