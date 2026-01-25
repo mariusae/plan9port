@@ -492,6 +492,7 @@ bufmode_capture_append(char *s)
 /*
  * Display a message inverted at the bottom of the screen (just the message length,
  * not a full status bar), then wait for any key or mouse event before continuing.
+ * The key/mouse event is passed through and processed normally.
  * This is used to show output from operations like Ctrl-S write.
  */
 static void
@@ -515,17 +516,13 @@ show_output_and_wait(char *msg)
 	term_puts(CSI "0m");  /* reset */
 	term_flush();
 
-	/* Wait for any key or mouse event */
-	for(;;){
-		key = term_readkey();
-		if(key < 0)
-			break;
-		/* Any key or mouse event dismisses the message */
-		if(key == KEY_MOUSE){
-			/* Consume the mouse event data but don't process it */
-			break;
-		}
-		break;
+	/* Wait for any key or mouse event, then process it */
+	key = term_readkey();
+	if(key >= 0){
+		if(key == KEY_MOUSE)
+			handle_mouse();
+		else
+			handle_bufkey(key);
 	}
 
 	/* Redraw normally */
@@ -1645,6 +1642,7 @@ handle_bufkey(int key)
 		break;
 
 	case KEY_PGDN:
+	case 22:  /* Ctrl-V - page down (Emacs-style) */
 		for(i = 0; i < term_rows; i++){
 			buf_cursor = file_nextline(curfile, buf_cursor);
 			if(buf_cursor >= curfile->b.nc){
@@ -1804,9 +1802,11 @@ handle_bufkey(int key)
 
 	case 3:          /* Ctrl+C - copy to system clipboard */
 	case KEY_ALT_C:  /* Alt+C - copy to system clipboard */
-	case KEY_ALT_W:  /* Alt+W - copy to system clipboard (Emacs-style) */
-		if(curfile->dot.r.p1 != curfile->dot.r.p2)
+	case KEY_ALT_W:  /* Alt+W - copy to snarf buffer and system clipboard (Emacs-style) */
+		if(curfile->dot.r.p1 != curfile->dot.r.p2){
+			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
 			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
+		}
 		break;
 
 	case KEY_ALT_X:  /* Alt+X - cut to system clipboard */
