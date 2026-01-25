@@ -17,6 +17,7 @@ jmp_buf	mainloop;
 List	tempfile = { 'p' };
 int	quitok = TRUE;
 int	downloaded;
+int	aflag;
 int	dflag;
 int	fflag;
 int	Rflag;
@@ -74,6 +75,7 @@ main(int _argc, char **_argv)
 		usage();
 	/* options for samterm */
 	case 'a':
+		aflag++;
 		*ap++ = "-a";
 		break;
 	case 'W':

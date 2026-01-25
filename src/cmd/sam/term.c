@@ -1045,7 +1045,7 @@ static int
 charwidth(Rune ch, int col)
 {
 	if(ch == '\t')
-		return 8 - (col % 8);
+		return 4 - (col % 4);
 	if(ch < 32)
 		return 2;  /* ^X - control char display format */
 	if(ch == 127)
@@ -1240,7 +1240,7 @@ draw_bufmode(void)
 			term_puts(CSI "7m");
 
 		if(ch == '\t'){
-			int spaces = 8 - (col % 8);
+			int spaces = 4 - (col % 4);
 			while(spaces-- > 0)
 				term_puts(" ");
 		}else if(ch < 32){
@@ -1961,10 +1961,10 @@ handle_bufkey(int key)
 		}
 		break;
 
-	case '\r':  /* Enter - insert newline */
+	case '\t':  /* Tab - insert tab character */
 		{
 			Posn p0;
-			Rune nl = '\n';
+			Rune tab = '\t';
 			if(curfile->dot.r.p1 != curfile->dot.r.p2){
 				/* Delete selection first, then insert */
 				p0 = curfile->dot.r.p1;
@@ -1974,10 +1974,62 @@ handle_bufkey(int key)
 			}else{
 				p0 = buf_cursor;
 			}
+			loginsert(curfile, p0, &tab, 1);
+			if(fileupdate(curfile, FALSE, FALSE))
+				seq++;
+			buf_cursor = p0 + 1;
+			curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
+		break;
+
+	case '\r':  /* Enter - insert newline */
+		{
+			Posn p0, linestart;
+			Rune nl = '\n';
+			Rune indent[256];
+			int nindent = 0;
+
+			if(curfile->dot.r.p1 != curfile->dot.r.p2){
+				/* Delete selection first, then insert */
+				p0 = curfile->dot.r.p1;
+				logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
+			}else{
+				p0 = buf_cursor;
+			}
+
+			/* If autoindent, collect leading whitespace from current line */
+			if(aflag){
+				/* Find start of current line */
+				linestart = p0;
+				while(linestart > 0 && filereadc(curfile, linestart-1) != '\n')
+					linestart--;
+				/* Collect leading whitespace */
+				while(nindent < 255 && linestart + nindent < p0){
+					Rune ch = filereadc(curfile, linestart + nindent);
+					if(ch == ' ' || ch == '\t')
+						indent[nindent++] = ch;
+					else
+						break;
+				}
+			}
+
 			loginsert(curfile, p0, &nl, 1);
 			if(fileupdate(curfile, FALSE, FALSE))
 				seq++;
 			buf_cursor = p0 + 1;
+
+			/* Insert autoindent whitespace */
+			if(aflag && nindent > 0){
+				loginsert(curfile, buf_cursor, indent, nindent);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
+				buf_cursor += nindent;
+			}
+
 			curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
 			mark_mode = 0;
 			needs_redraw = 1;
