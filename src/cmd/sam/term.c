@@ -254,9 +254,6 @@ enter_bufmode(void)
 	term_puts(CSI "?1006h");  /* SGR extended mode */
 	mouse_enabled = 1;
 
-	/* Set cursor to non-blinking block (DECSCUSR) */
-	term_puts(CSI "2 q");
-
 	/* Enable bracketed paste mode */
 	term_puts(CSI "?2004h");
 
@@ -297,9 +294,6 @@ exit_bufmode(void)
 		term_puts(CSI "?1006l");
 		mouse_enabled = 0;
 	}
-
-	/* Restore default cursor style */
-	term_puts(CSI "0 q");
 
 	/* Disable bracketed paste mode */
 	term_puts(CSI "?2004l");
