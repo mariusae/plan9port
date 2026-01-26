@@ -393,6 +393,7 @@ extern int	panicking;
 extern Rune	empty[];
 extern int	termlocked;
 extern int	outbuffered;
+extern int	aflag;
 
 /* term.c - terminal mode interface for -d flag */
 extern int	termmode;	/* terminal mode active (tty detected) */
