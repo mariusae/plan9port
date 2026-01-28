@@ -105,9 +105,7 @@ static int linedone = 0; /* line is complete, return chars from linebuf */
 #define KEY_DEL		0x108
 #define KEY_MOUSE	0x200
 #define KEY_ALT_BS	0x109  /* Alt/Option + Backspace */
-#define KEY_ALT_C	0x10a  /* Alt/Option + C - copy */
 #define KEY_ALT_V	0x10b  /* Alt/Option + V - page up (Meta-V) */
-#define KEY_ALT_X	0x10c  /* Alt/Option + X - cut to clipboard */
 #define KEY_ALT_W	0x10d  /* Alt/Option + W - copy to clipboard (Emacs-style) */
 #define KEY_PASTE	0x10e  /* Bracketed paste start */
 #define KEY_ALT_LEFT	0x10f  /* Alt/Option + Left - backward word */
@@ -691,17 +689,9 @@ term_readkey(void)
 	if(c == 127 || c == 8)
 		return KEY_ALT_BS;
 
-	/* Alt/Option + C - copy */
-	if(c == 'c')
-		return KEY_ALT_C;
-
-	/* Alt/Option + V - paste */
+	/* Alt/Option + V - page up (Meta-V) */
 	if(c == 'v')
 		return KEY_ALT_V;
-
-	/* Alt/Option + X - cut to clipboard */
-	if(c == 'x')
-		return KEY_ALT_X;
 
 	/* Alt/Option + W - copy to clipboard (Emacs-style) */
 	if(c == 'w')
@@ -1732,6 +1722,7 @@ handle_bufkey(int key)
 		if(curfile->dot.r.p1 != curfile->dot.r.p2){
 			/* Snarf the selection first */
 			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
+			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
 			/* Delete it */
 			logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
 			if(fileupdate(curfile, FALSE, FALSE))
@@ -1794,28 +1785,10 @@ handle_bufkey(int key)
 		}
 		break;
 
-	case 3:          /* Ctrl+C - copy to system clipboard */
-	case KEY_ALT_C:  /* Alt+C - copy to system clipboard */
 	case KEY_ALT_W:  /* Alt+W - copy to snarf buffer and system clipboard (Emacs-style) */
 		if(curfile->dot.r.p1 != curfile->dot.r.p2){
 			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
 			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
-		}
-		break;
-
-	case KEY_ALT_X:  /* Alt+X - cut to system clipboard */
-		if(curfile->dot.r.p1 != curfile->dot.r.p2){
-			/* Copy to internal clipboard and system clipboard */
-			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
-			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
-			/* Delete the selection */
-			logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
-			if(fileupdate(curfile, FALSE, FALSE))
-				seq++;
-			buf_cursor = curfile->dot.r.p1;
-			curfile->dot.r.p2 = curfile->dot.r.p1;
-			mark_mode = 0;
-			needs_redraw = 1;
 		}
 		break;
 
