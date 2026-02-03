@@ -855,7 +855,17 @@ read_bracketed_paste(Rune **bufp)
 
 		/* Handle UTF-8 decoding */
 		if((c & 0x80) == 0){
-			/* ASCII */
+			/* ASCII - convert CR and CRLF to LF */
+			if(c == '\r'){
+				/* Peek at next char to check for CRLF */
+				int next = term_readchar_timeout(10);
+				if(next >= 0 && next != '\n'){
+					/* Not CRLF, push back the char we peeked */
+					pending_char = next;
+				}
+				/* Convert CR (or CRLF) to LF */
+				c = '\n';
+			}
 			if(n >= bufsize){
 				bufsize *= 2;
 				buf = erealloc(buf, bufsize * sizeof(Rune));
