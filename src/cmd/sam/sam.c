@@ -46,6 +46,9 @@ main(int _argc, char **_argv)
 	char **volatile argv;
 	String *t;
 	char *termargs[10], **ap;
+	char *p;
+	long lineno;
+	File *f;
 
 	argc = _argc;
 	argv = _argv;
@@ -105,12 +108,27 @@ main(int _argc, char **_argv)
 	if(argc>0){
 		for(i=0; i<argc; i++){
 			if(!setjmp(mainloop)){
+				lineno = 0;
+				p = strrchr(argv[i], ':');
+				if(p != nil && p != argv[i] && p[1] != '\0'
+				&& access(argv[i], AEXIST) != 0){
+					char *end;
+					lineno = strtol(p+1, &end, 10);
+					if(*end != '\0' || lineno < 0)
+						lineno = 0;
+					else
+						*p = '\0';
+				}
 				t = tmpcstr(argv[i]);
 				Straddc(t, '\0');
 				Strduplstr(&genstr, t);
 				freetmpstr(t);
 				fixname(&genstr);
-				logsetname(newfile(), &genstr);
+				f = newfile();
+				f->initlineno = lineno;
+				logsetname(f, &genstr);
+				if(p != nil && lineno > 0)
+					*p = ':';
 			}
 		}
 	}else if(!downloaded)
@@ -277,6 +295,7 @@ void
 load(File *f)
 {
 	Address saveaddr;
+	Address a;
 
 	Strduplstr(&genstr, &f->name);
 	filename(f);
@@ -290,6 +309,15 @@ load(File *f)
 	}
 
 	fileupdate(f, TRUE, TRUE);
+
+	if(f->initlineno > 0){
+		a.f = f;
+		a.r.p1 = a.r.p2 = 0;
+		a = lineaddr(f->initlineno, a, 0);
+		f->dot.r = a.r;
+		f->ndot.r = a.r;
+		f->initlineno = 0;
+	}
 }
 
 void

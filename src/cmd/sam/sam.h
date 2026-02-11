@@ -190,6 +190,7 @@ struct File
 	Range		prevmark;
 	long		prevseq;
 	int		prevmod;
+	Posn		initlineno;	/* line number from file:lineno on command line */
 };
 /*File*		fileaddtext(File*, Text*); */
 void		fileclose(File*);

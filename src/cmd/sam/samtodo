@@ -1,14 +1,7 @@
 https://9fans.github.io/plan9port/man/man1/sam.html
 
 to do:
-
-- C-w issues a 'w'; C-q issues 'q'. Make sure to restore the command-mode display.
-- option-< option-> navigate by word
-- C-k on an empty line should remove the line itself
-
-leaving this here
-
---
+- c-v: page down
 
 Using Unicode/UTF-8, you can write in emails and source code things such as
 
@@ -20,9 +13,5 @@ Mathematics and Sciences:
 
   2H₂ + O₂ ⇌ 2H₂O, R = 4.7 kΩ, ⌀ 200 mm
 
-Linguistics and dictionaries:
 
-  ði ntnænl fntk sosien
-  Yln], Yen [jn], Yoga [jog]
 
-some change

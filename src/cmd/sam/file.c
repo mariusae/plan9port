@@ -51,6 +51,7 @@ fileopen(void)
 	f->seq = 0;
 	f->mod = FALSE;
 	f->unread = TRUE;
+	f->initlineno = 0;
 	Strinit0(&f->name);
 	return f;
 }
