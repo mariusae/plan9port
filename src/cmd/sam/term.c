@@ -1188,6 +1188,14 @@ draw_bufmode(void)
 		return;
 	}
 
+	/* Detect file switch or first display after entering buffer mode */
+	if(curfile != last_file){
+		if(last_file)
+			save_file_state(last_file);
+		restore_file_state(curfile);
+		last_file = curfile;
+	}
+
 	buf_scrollto(buf_cursor);
 	term_clear();
 	term_puts(CSI "0m");  /* Reset attributes to ensure clean state */
