@@ -73,6 +73,8 @@ static struct {
 	File *file;
 	Posn origin;
 	Posn cursor;
+	Posn dotp1;	/* dot.r.p1 when state was saved */
+	Posn dotp2;	/* dot.r.p2 when state was saved */
 } file_states[MAX_FILE_STATES];
 static int nfile_states = 0;
 static File *last_file = nil;  /* Track file switches */
@@ -537,6 +539,8 @@ save_file_state(File *f)
 		if(file_states[i].file == f){
 			file_states[i].origin = buf_origin;
 			file_states[i].cursor = buf_cursor;
+			file_states[i].dotp1 = f->dot.r.p1;
+			file_states[i].dotp2 = f->dot.r.p2;
 			return;
 		}
 	}
@@ -546,6 +550,8 @@ save_file_state(File *f)
 		file_states[nfile_states].file = f;
 		file_states[nfile_states].origin = buf_origin;
 		file_states[nfile_states].cursor = buf_cursor;
+		file_states[nfile_states].dotp1 = f->dot.r.p1;
+		file_states[nfile_states].dotp2 = f->dot.r.p2;
 		nfile_states++;
 	}
 }
@@ -565,22 +571,33 @@ restore_file_state(File *f)
 	/* Look for existing entry */
 	for(i = 0; i < nfile_states; i++){
 		if(file_states[i].file == f){
-			buf_origin = file_states[i].origin;
-			buf_cursor = file_states[i].cursor;
-			/* Clamp to valid range */
-			if(buf_origin > f->b.nc)
-				buf_origin = f->b.nc > 0 ? file_linestart(f, f->b.nc) : 0;
-			if(buf_cursor > f->b.nc)
-				buf_cursor = f->b.nc;
+			if(f->dot.r.p1 != file_states[i].dotp1
+			|| f->dot.r.p2 != file_states[i].dotp2){
+				/* Dot changed since we saved - scroll to new selection */
+				buf_cursor = f->dot.r.p1;
+				buf_origin = file_linestart(f, buf_cursor);
+				/* Center the selection on screen */
+				for(i = 0; i < term_rows / 2 && buf_origin > 0; i++)
+					buf_origin = file_prevline(f, buf_origin);
+			}else{
+				buf_origin = file_states[i].origin;
+				buf_cursor = file_states[i].cursor;
+				/* Clamp to valid range */
+				if(buf_origin > f->b.nc)
+					buf_origin = f->b.nc > 0 ? file_linestart(f, f->b.nc) : 0;
+				if(buf_cursor > f->b.nc)
+					buf_cursor = f->b.nc;
+			}
 			return;
 		}
 	}
 
 	/* No saved state - initialize from dot */
 	buf_cursor = f->dot.r.p1;
-	buf_origin = 0;
-	if(buf_cursor > 0)
-		buf_origin = file_linestart(f, buf_cursor);
+	buf_origin = file_linestart(f, buf_cursor);
+	/* Center the selection on screen */
+	for(i = 0; i < term_rows / 2 && buf_origin > 0; i++)
+		buf_origin = file_prevline(f, buf_origin);
 }
 
 /* Read a key in raw mode */
