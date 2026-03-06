@@ -2216,7 +2216,18 @@ handle_mouse(void)
 			if(buf_origin > 0)
 				buf_origin = file_prevline(curfile, buf_origin);
 		}
-		/* Cursor stays in place - will naturally move down on screen */
+		/* Move cursor up if it's now below the view */
+		if(count_visual_rows(buf_origin, buf_cursor) >= term_rows){
+			/* Place cursor on the last visible line */
+			Posn p = buf_origin;
+			for(i = 0; i < term_rows - 1; i++){
+				Posn next = file_nextline(curfile, p);
+				if(next >= curfile->b.nc || next == p)
+					break;
+				p = next;
+			}
+			buf_cursor = p;
+		}
 		needs_redraw = 1;
 	}else if(button == 65){
 		/* Scroll down (show later content) */
