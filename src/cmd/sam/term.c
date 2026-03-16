@@ -3158,6 +3158,10 @@ handle_mouse(void)
 
 		/* Scroll events */
 		if(button == 64 || button == 65){
+			if(!in_overlay){
+				/* Scroll in buffer area: forward to buffer without dismissing */
+				goto buffer_click;
+			}
 			int oh, hist_visible, max_scroll;
 			oh = overlay_height;
 			hist_visible = oh - 3;
