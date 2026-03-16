@@ -163,6 +163,10 @@ static int iswordchar(Rune ch);
 static void handle_overlay_key(int key);
 static void overlay_submit(void);
 static void overlay_add_history(char *line);
+static void detect_darkbg(void);
+
+/* Dark/light mode detection via OSC 11 */
+static int term_darkbg = 1;  /* assume dark background by default */
 
 /* Output buffer for terminal */
 static char outbuf[16384];
@@ -912,6 +916,95 @@ restore_file_state(File *f)
 		buf_origin = file_prevline(f, buf_origin);
 }
 
+/*
+ * Detect terminal background color via OSC 11.
+ * Sends OSC 11 query, parses response to determine dark vs light background.
+ * Sets term_darkbg accordingly. Must be called when terminal is in raw mode.
+ */
+static void
+detect_darkbg(void)
+{
+	fd_set fds;
+	struct timeval tv;
+	unsigned char buf[128];
+	int n;
+	unsigned long r, g, b;
+	char *p;
+
+	/* Flush any pending output first */
+	term_flush();
+
+	/* Send OSC 11 query: request background color */
+	write(1, "\033]11;?\033\\", 8);
+
+	/* Wait for response with timeout */
+	FD_ZERO(&fds);
+	FD_SET(0, &fds);
+	tv.tv_sec = 0;
+	tv.tv_usec = 200000;  /* 200ms timeout */
+
+	if(select(1, &fds, NULL, NULL, &tv) <= 0)
+		return;  /* no response, keep current setting */
+
+	/* Read response: ESC ] 11 ; rgb:RRRR/GGGG/BBBB ESC \ (or BEL) */
+	n = 0;
+	while(n < (int)sizeof(buf) - 1){
+		FD_ZERO(&fds);
+		FD_SET(0, &fds);
+		tv.tv_sec = 0;
+		tv.tv_usec = 50000;  /* 50ms between chars */
+		if(select(1, &fds, NULL, NULL, &tv) <= 0)
+			break;
+		if(read(0, &buf[n], 1) != 1)
+			break;
+		/* Stop at BEL or backslash (ST terminator) */
+		if(buf[n] == '\007')
+			break;
+		if(n > 0 && buf[n] == '\\' && buf[n-1] == '\033')
+			break;
+		n++;
+	}
+	buf[n] = '\0';
+
+	/* Parse: look for "rgb:" followed by hex/hex/hex */
+	p = strstr((char*)buf, "rgb:");
+	if(p == nil)
+		return;
+	p += 4;
+
+	/* Parse hex color components (variable length: 1-4 hex digits each) */
+	r = strtoul(p, &p, 16);
+	if(*p != '/') return;
+	p++;
+	g = strtoul(p, &p, 16);
+	if(*p != '/') return;
+	p++;
+	b = strtoul(p, &p, 16);
+
+	/* Normalize to 8-bit range */
+	/* Components may be 1, 2, 3, or 4 hex digits (4, 8, 12, or 16 bits) */
+	if(r > 0xFF || g > 0xFF || b > 0xFF){
+		if(r > 0xFFF || g > 0xFFF || b > 0xFFF){
+			/* 16-bit values */
+			r >>= 8;
+			g >>= 8;
+			b >>= 8;
+		}else{
+			/* 12-bit values */
+			r >>= 4;
+			g >>= 4;
+			b >>= 4;
+		}
+	}
+
+	/* Compute perceived luminance (ITU-R BT.601) */
+	/* Y = 0.299*R + 0.587*G + 0.114*B */
+	{
+		int lum = (299 * (int)r + 587 * (int)g + 114 * (int)b) / 1000;
+		term_darkbg = (lum < 128);
+	}
+}
+
 /* Read a key in raw mode */
 static int pending_char = -1;
 
@@ -1607,17 +1700,34 @@ draw_bufmode(void)
 	}
 
 	if(overlay_visible){
-		/* Draw overlay window with subtle background */
+		/* Draw overlay window with background adapted to dark/light mode */
 		int orow, i, j, hist_visible, hist_start, prompt_row;
+		char overlay_bg[32], prompt_fg[32], output_fg[32], cmd_fg[32], input_fg[32];
 
-		/* Background: bright black (adapts to terminal theme) */
-		#define OVERLAY_BG CSI "48;2;65;67;75m"
+		/*
+		 * Color scheme:
+		 * cmd_fg: bold, used for entered command history lines
+		 * input_fg: normal weight, used for current input being typed
+		 */
+		if(term_darkbg){
+			snprint(overlay_bg, sizeof overlay_bg, CSI "48;2;65;67;75m");
+			snprint(prompt_fg, sizeof prompt_fg, CSI "1;34m");
+			snprint(output_fg, sizeof output_fg, CSI "38;2;180;180;190m");
+			snprint(cmd_fg, sizeof cmd_fg, CSI "1m");
+			snprint(input_fg, sizeof input_fg, CSI "0m");
+		}else{
+			snprint(overlay_bg, sizeof overlay_bg, CSI "48;2;215;218;224m");
+			snprint(prompt_fg, sizeof prompt_fg, CSI "1;34m");
+			snprint(output_fg, sizeof output_fg, CSI "38;2;80;80;95m");
+			snprint(cmd_fg, sizeof cmd_fg, CSI "1;38;2;30;30;40m");
+			snprint(input_fg, sizeof input_fg, CSI "0m" CSI "38;2;30;30;40m");
+		}
 
 		orow = content_rows;
 
 		/* Top padding line */
 		term_goto(orow, 0);
-		term_puts(OVERLAY_BG);
+		term_puts(overlay_bg);
 		for(j = 0; j < term_cols; j++)
 			term_puts(" ");
 		term_puts(CSI "0m");
@@ -1638,12 +1748,14 @@ draw_bufmode(void)
 		for(i = hist_start; i < overlay_hist_count - overlay_hist_scroll && orow < prompt_row; i++){
 			int slen;
 			term_goto(orow, 0);
-			term_puts(OVERLAY_BG);
+			term_puts(overlay_bg);
 			if(overlay_history[i][0] == '\x01'){
 				/* Command line: bold blue › then normal text */
-				term_puts(CSI "1;34m" OVERLAY_BG);
+				term_puts(prompt_fg);
+				term_puts(overlay_bg);
 				term_puts("\xe2\x9d\xaf ");  /* U+276F ❯ + space */
-				term_puts(CSI "0m" OVERLAY_BG);
+				term_puts(cmd_fg);
+				term_puts(overlay_bg);
 				slen = strlen(overlay_history[i] + 1);
 				if(slen > term_cols - 2)
 					slen = term_cols - 2;
@@ -1652,7 +1764,8 @@ draw_bufmode(void)
 					term_puts(" ");
 			}else{
 				/* Output line: slightly muted, indented 2 spaces */
-				term_puts(CSI "38;2;180;180;190m" OVERLAY_BG);
+				term_puts(output_fg);
+				term_puts(overlay_bg);
 				term_puts("  ");
 				slen = strlen(overlay_history[i]);
 				if(slen > term_cols - 2)
@@ -1667,10 +1780,12 @@ draw_bufmode(void)
 
 		/* Draw prompt line with background */
 		term_goto(prompt_row, 0);
-		term_puts(OVERLAY_BG);
-		term_puts(CSI "1;34m" OVERLAY_BG);  /* bold blue on overlay bg */
+		term_puts(overlay_bg);
+		term_puts(prompt_fg);
+		term_puts(overlay_bg);
 		term_puts("\xe2\x9d\xaf ");  /* U+276F ❯ + space */
-		term_puts(CSI "0m" OVERLAY_BG);
+		term_puts(input_fg);
+		term_puts(overlay_bg);
 
 		/* Draw current input, tracking cursor column */
 		col = 2;
@@ -1695,7 +1810,7 @@ draw_bufmode(void)
 
 			/* Bottom padding line */
 			term_goto(term_rows - 1, 0);
-			term_puts(OVERLAY_BG);
+			term_puts(overlay_bg);
 			for(i = 0; i < term_cols; i++)
 				term_puts(" ");
 			term_puts(CSI "0m");
@@ -1703,8 +1818,6 @@ draw_bufmode(void)
 			/* Position cursor on prompt line */
 			term_goto(prompt_row, cursor_col);
 		}
-
-		#undef OVERLAY_BG
 	}else{
 		/* Draw status message at bottom if active */
 		if(status_active()){
@@ -2152,6 +2265,7 @@ handle_bufkey(int key)
 			overlay_cursor = 0;
 			overlay_hist_scroll = 0;
 			overlay_recall_idx = -1;
+			detect_darkbg();
 		}
 		needs_redraw = 1;
 		break;
