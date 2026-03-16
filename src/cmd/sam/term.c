@@ -163,6 +163,7 @@ static int iswordchar(Rune ch);
 static void handle_overlay_key(int key);
 static void overlay_submit(void);
 static void overlay_add_history(char *line);
+static int overlay_find_cmd(int n);
 static void detect_darkbg(void);
 
 /* Dark/light mode detection via OSC 11 */
@@ -540,8 +541,19 @@ overlay_submit(void)
 	char prompt_line[OVERLAY_HIST_COLS];
 	int i, n;
 
-	if(overlay_inputlen == 0)
+	if(overlay_inputlen == 0){
+		/* Empty input: repeat last command, append output */
+		int idx = overlay_find_cmd(0);
+		if(idx < 0)
+			return;
+		/* Re-execute the last command without adding a new history line */
+		bufmode_capture_start();
+		queue_string(overlay_history[idx] + 1);  /* skip \x01 marker */
+		queue_char('\n');
+		overlay_hist_scroll = 0;
+		needs_redraw = 1;
 		return;
+	}
 
 	/* Convert Rune input to UTF-8 */
 	n = 0;
