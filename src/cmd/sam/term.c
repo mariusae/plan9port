@@ -73,10 +73,9 @@ static Rune overlay_input[4096];
 static int overlay_inputlen = 0;
 static int overlay_cursor = 0;  /* cursor position within overlay_input */
 
-#define OVERLAY_HIST_LINES 256
-#define OVERLAY_HIST_COLS  512
-static char overlay_history[OVERLAY_HIST_LINES][OVERLAY_HIST_COLS];
+static char **overlay_history = nil;
 static int overlay_hist_count = 0;
+static int overlay_hist_cap = 0;
 static int overlay_hist_scroll = 0;
 
 /* Command recall: indices of command lines in overlay_history */
@@ -516,18 +515,14 @@ bufmode_capture_append(char *s)
 static void
 overlay_add_history(char *line)
 {
-	if(overlay_hist_count < OVERLAY_HIST_LINES){
-		strncpy(overlay_history[overlay_hist_count], line, OVERLAY_HIST_COLS - 1);
-		overlay_history[overlay_hist_count][OVERLAY_HIST_COLS - 1] = '\0';
-		overlay_hist_count++;
-	}else{
-		/* Shift everything up, discard oldest */
-		int i;
-		for(i = 0; i < OVERLAY_HIST_LINES - 1; i++)
-			memmove(overlay_history[i], overlay_history[i+1], OVERLAY_HIST_COLS);
-		strncpy(overlay_history[OVERLAY_HIST_LINES - 1], line, OVERLAY_HIST_COLS - 1);
-		overlay_history[OVERLAY_HIST_LINES - 1][OVERLAY_HIST_COLS - 1] = '\0';
+	if(overlay_hist_count >= overlay_hist_cap){
+		int newcap = overlay_hist_cap ? overlay_hist_cap * 2 : 256;
+		overlay_history = erealloc(overlay_history, newcap * sizeof(char*));
+		overlay_hist_cap = newcap;
 	}
+	overlay_history[overlay_hist_count] = emalloc(strlen(line) + 1);
+	strcpy(overlay_history[overlay_hist_count], line);
+	overlay_hist_count++;
 	overlay_hist_scroll = 0;
 }
 
@@ -538,7 +533,7 @@ static void
 overlay_submit(void)
 {
 	char cmd[8192];
-	char prompt_line[OVERLAY_HIST_COLS];
+	char prompt_line[8192];
 	int i, n;
 
 	if(overlay_inputlen == 0){
@@ -760,6 +755,11 @@ handle_overlay_key(int key)
 		break;
 
 	case 11:  /* Ctrl-K - clear history */
+		{
+			int k;
+			for(k = 0; k < overlay_hist_count; k++)
+				free(overlay_history[k]);
+		}
 		overlay_hist_count = 0;
 		overlay_hist_scroll = 0;
 		overlay_recall_idx = -1;
