@@ -1702,7 +1702,7 @@ draw_bufmode(void)
 	if(overlay_visible){
 		/* Draw overlay window with background adapted to dark/light mode */
 		int orow, i, j, hist_visible, hist_start, prompt_row;
-		char overlay_bg[32], prompt_fg[32], output_fg[32], cmd_fg[32], input_fg[32];
+		char overlay_bg[32], output_fg[32], cmd_fg[32], input_fg[32];
 
 		/*
 		 * Color scheme:
@@ -1711,13 +1711,11 @@ draw_bufmode(void)
 		 */
 		if(term_darkbg){
 			snprint(overlay_bg, sizeof overlay_bg, CSI "48;2;65;67;75m");
-			snprint(prompt_fg, sizeof prompt_fg, CSI "1;34m");
 			snprint(output_fg, sizeof output_fg, CSI "38;2;180;180;190m");
 			snprint(cmd_fg, sizeof cmd_fg, CSI "1m");
 			snprint(input_fg, sizeof input_fg, CSI "0m");
 		}else{
 			snprint(overlay_bg, sizeof overlay_bg, CSI "48;2;215;218;224m");
-			snprint(prompt_fg, sizeof prompt_fg, CSI "1;34m");
 			snprint(output_fg, sizeof output_fg, CSI "38;2;80;80;95m");
 			snprint(cmd_fg, sizeof cmd_fg, CSI "1;38;2;30;30;40m");
 			snprint(input_fg, sizeof input_fg, CSI "0m" CSI "38;2;30;30;40m");
@@ -1750,23 +1748,20 @@ draw_bufmode(void)
 			term_goto(orow, 0);
 			term_puts(overlay_bg);
 			if(overlay_history[i][0] == '\x01'){
-				/* Command line: bold blue › then normal text */
-				term_puts(prompt_fg);
-				term_puts(overlay_bg);
-				term_puts("\xe2\x9d\xaf ");  /* U+276F ❯ + space */
+				/* Command line: flush left, bold */
 				term_puts(cmd_fg);
 				term_puts(overlay_bg);
 				slen = strlen(overlay_history[i] + 1);
-				if(slen > term_cols - 2)
-					slen = term_cols - 2;
+				if(slen > term_cols)
+					slen = term_cols;
 				term_write(overlay_history[i] + 1, slen);
-				for(j = slen + 2; j < term_cols; j++)
+				for(j = slen; j < term_cols; j++)
 					term_puts(" ");
 			}else{
-				/* Output line: slightly muted, indented 2 spaces */
+				/* Output line: full block gutter + text */
 				term_puts(output_fg);
 				term_puts(overlay_bg);
-				term_puts("  ");
+				term_puts("\xe2\x96\x88 ");  /* U+2588 █ + space */
 				slen = strlen(overlay_history[i]);
 				if(slen > term_cols - 2)
 					slen = term_cols - 2;
@@ -1781,16 +1776,13 @@ draw_bufmode(void)
 		/* Draw prompt line with background */
 		term_goto(prompt_row, 0);
 		term_puts(overlay_bg);
-		term_puts(prompt_fg);
-		term_puts(overlay_bg);
-		term_puts("\xe2\x9d\xaf ");  /* U+276F ❯ + space */
 		term_puts(input_fg);
 		term_puts(overlay_bg);
 
 		/* Draw current input, tracking cursor column */
-		col = 2;
+		col = 0;
 		{
-			int cursor_col = 2;
+			int cursor_col = 0;
 			for(i = 0; i < overlay_inputlen && col < term_cols; i++){
 				char buf[UTFmax + 1];
 				int n = runetochar(buf, &overlay_input[i]);
