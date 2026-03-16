@@ -1227,12 +1227,8 @@ detect_darkbg(void)
 	/* Flush any pending output first */
 	term_flush();
 
-	/* Send OSC 11 query: request background color.
-	 * In tmux, wrap in DCS passthrough to reach the real terminal. */
-	if(getenv("TMUX"))
-		write(1, "\033Ptmux;\033\033]11;?\033\033\\\033\\", 19);
-	else
-		write(1, "\033]11;?\033\\", 8);
+	/* Send OSC 11 query: request background color */
+	write(1, "\033]11;?\033\\", 8);
 
 	/* Wait for response with timeout */
 	FD_ZERO(&fds);
