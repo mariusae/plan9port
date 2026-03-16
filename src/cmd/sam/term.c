@@ -398,6 +398,122 @@ terminit(int startbuf)
 		enter_bufmode();
 }
 
+/*
+ * Print terminal diagnostics and exit.
+ * Temporarily enters raw mode to query the terminal,
+ * then restores settings before printing results.
+ */
+void
+termdiag(void)
+{
+	struct termios saved, raw;
+	fd_set fds;
+	struct timeval tv;
+	unsigned char buf[128];
+	int n, in_tmux;
+	unsigned long r, g, b;
+	char *p;
+
+	if(!isatty(0)){
+		fprint(2, "sam -T: stdin is not a tty\n");
+		return;
+	}
+
+	in_tmux = (getenv("TMUX") != nil);
+
+	/* Enter raw mode temporarily */
+	if(tcgetattr(0, &saved) < 0){
+		fprint(2, "sam -T: cannot get terminal attributes\n");
+		return;
+	}
+	raw = saved;
+	raw.c_lflag &= ~(ECHO | ICANON);
+	raw.c_cc[VMIN] = 1;
+	raw.c_cc[VTIME] = 0;
+	tcsetattr(0, TCSAFLUSH, &raw);
+
+	/* Send OSC 11 query */
+	if(in_tmux)
+		write(1, "\033Ptmux;\033\033]11;?\033\033\\\033\\", 19);
+	else
+		write(1, "\033]11;?\033\\", 8);
+
+	/* Wait for response */
+	FD_ZERO(&fds);
+	FD_SET(0, &fds);
+	tv.tv_sec = 0;
+	tv.tv_usec = 500000;  /* 500ms timeout */
+
+	if(select(1, &fds, NULL, NULL, &tv) <= 0){
+		tcsetattr(0, TCSAFLUSH, &saved);
+		print("background color: no response from terminal\n");
+		print("method: %s\n", in_tmux ? "tmux DCS passthrough" : "direct OSC 11");
+		return;
+	}
+
+	/* Read response */
+	n = 0;
+	while(n < (int)sizeof(buf) - 1){
+		FD_ZERO(&fds);
+		FD_SET(0, &fds);
+		tv.tv_sec = 0;
+		tv.tv_usec = 50000;
+		if(select(1, &fds, NULL, NULL, &tv) <= 0)
+			break;
+		if(read(0, &buf[n], 1) != 1)
+			break;
+		if(buf[n] == '\007')
+			break;
+		if(n > 0 && buf[n] == '\\' && buf[n-1] == '\033')
+			break;
+		n++;
+	}
+	buf[n] = '\0';
+
+	/* Restore terminal */
+	tcsetattr(0, TCSAFLUSH, &saved);
+
+	print("method: %s\n", in_tmux ? "tmux DCS passthrough" : "direct OSC 11");
+
+	/* Parse response */
+	p = strstr((char*)buf, "rgb:");
+	if(p == nil){
+		print("background color: could not parse response\n");
+		return;
+	}
+	p += 4;
+
+	r = strtoul(p, &p, 16);
+	if(*p != '/') goto bad;
+	p++;
+	g = strtoul(p, &p, 16);
+	if(*p != '/') goto bad;
+	p++;
+	b = strtoul(p, &p, 16);
+
+	print("raw rgb: %lux/%lux/%lux\n", r, g, b);
+
+	/* Normalize to 8-bit */
+	if(r > 0xFF || g > 0xFF || b > 0xFF){
+		if(r > 0xFFF || g > 0xFFF || b > 0xFFF){
+			r >>= 8; g >>= 8; b >>= 8;
+		}else{
+			r >>= 4; g >>= 4; b >>= 4;
+		}
+	}
+
+	{
+		int lum = (299 * (int)r + 587 * (int)g + 114 * (int)b) / 1000;
+		print("rgb (8-bit): %lud %lud %lud\n", r, g, b);
+		print("luminance: %d\n", lum);
+		print("mode: %s\n", lum < 128 ? "dark" : "light");
+	}
+	return;
+
+bad:
+	print("background color: malformed rgb response\n");
+}
+
 /* Queue management */
 static void
 queue_char(Rune c)

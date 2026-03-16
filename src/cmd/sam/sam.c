@@ -77,6 +77,10 @@ main(int _argc, char **_argv)
 		dprint("sam: unknown flag %c\n", ARGC());
 		usage();
 	/* options for samterm */
+	case 'T':
+		termdiag();
+		exits(nil);
+		break;
 	case 'a':
 		aflag++;
 		*ap++ = "-a";
