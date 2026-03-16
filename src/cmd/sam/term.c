@@ -2919,12 +2919,33 @@ handle_bufkey(int key)
 		break;
 
 	case KEY_UP:
+		/* Page up - same as PgUp */
+		for(i = 0; i < term_rows; i++){
+			Posn prev = file_prevline(curfile, buf_cursor);
+			if(prev == buf_cursor)
+				break;
+			buf_cursor = prev;
+		}
+		needs_redraw = 1;
+		break;
+
+	case KEY_DOWN:
+		/* Page down - same as PgDn */
+		for(i = 0; i < term_rows; i++){
+			buf_cursor = file_nextline(curfile, buf_cursor);
+			if(buf_cursor >= curfile->b.nc){
+				buf_cursor = curfile->b.nc;
+				break;
+			}
+		}
+		needs_redraw = 1;
+		break;
+
 	case 16:  /* Ctrl-P - move up (Emacs-style) */
 		buf_cursor = move_visual_up(buf_cursor);
 		needs_redraw = 1;
 		break;
 
-	case KEY_DOWN:
 	case 14:  /* Ctrl-N - move down (Emacs-style) */
 		buf_cursor = move_visual_down(buf_cursor);
 		if(buf_cursor > curfile->b.nc)
