@@ -77,12 +77,54 @@ a_cmd(File *f, Cmd *cp)
 int
 b_cmd(File *f, Cmd *cp)
 {
+	long lineno = 0;
+
 	USED(f);
-	f = cp->cmdc=='b'? tofile(cp->ctext) : getfile(cp->ctext);
-	if(f->unread)
+	if(cp->cmdc == 'B'){
+		/* Parse optional :lineno suffix */
+		String *s = cp->ctext;
+		int i;
+		/* Find last ':' in the text (skip leading space) */
+		int last_colon = -1;
+		for(i = 0; i < s->n && s->s[i] != '\n' && s->s[i] != '\0'; i++)
+			if(s->s[i] == ':')
+				last_colon = i;
+		if(last_colon > 0 && last_colon < i){
+			/* Check if everything after colon is digits */
+			int j, alldigits = 1;
+			for(j = last_colon+1; j < i; j++){
+				if(s->s[j] < '0' || s->s[j] > '9'){
+					alldigits = 0;
+					break;
+				}
+			}
+			if(alldigits && j > last_colon+1){
+				lineno = 0;
+				for(j = last_colon+1; j < i; j++)
+					lineno = lineno * 10 + (s->s[j] - '0');
+				/* Strip :lineno from the string */
+				Strdelete(s, (Posn)last_colon, (Posn)i);
+			}
+		}
+		f = getfile(cp->ctext);
+	}else
+		f = tofile(cp->ctext);
+	if(f->unread){
+		if(lineno > 0)
+			f->initlineno = lineno;
 		load(f);
-	else if(nest == 0)
-		filename(f);
+	}else{
+		if(lineno > 0){
+			Address a;
+			a.f = f;
+			a.r.p1 = a.r.p2 = 0;
+			a = lineaddr(lineno, a, 0);
+			f->dot.r = a.r;
+			f->ndot.r = a.r;
+		}
+		if(nest == 0)
+			filename(f);
+	}
 	return TRUE;
 }
 

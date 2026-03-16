@@ -80,6 +80,7 @@ static int overlay_hist_scroll = 0;
 
 /* Overlay mouse selection state */
 static int overlay_selecting = 0;
+static int overlay_sel_btn2 = 0;  /* right-click selection: issue B on release */
 static int overlay_sel_start_line = -1;  /* history index */
 static int overlay_sel_start_col = 0;    /* character offset in line */
 static int overlay_sel_end_line = -1;
@@ -3202,12 +3203,13 @@ handle_mouse(void)
 			goto buffer_click;
 		}
 
-		/* Click inside overlay: start selection */
-		if(in_overlay && pressed && (button & 3) == 0){
+		/* Click inside overlay: start selection (left or right click) */
+		if(in_overlay && pressed && ((button & 3) == 0 || (button & 3) == 2)){
 			int hl, hc;
 			overlay_screen_to_pos(y, x, &hl, &hc);
 			if(hl >= 0){
 				overlay_selecting = 1;
+				overlay_sel_btn2 = ((button & 3) == 2);
 				overlay_sel_start_line = hl;
 				overlay_sel_start_col = hc;
 				overlay_sel_end_line = hl;
@@ -3217,17 +3219,83 @@ handle_mouse(void)
 			return;
 		}
 
-		/* Release inside overlay: finish selection, copy */
+		/* Release inside overlay: finish selection */
 		if(!pressed){
 			if(overlay_selecting){
 				int hl, hc;
+				int was_btn2 = overlay_sel_btn2;
 				overlay_screen_to_pos(y, x, &hl, &hc);
 				if(hl >= 0){
 					overlay_sel_end_line = hl;
 					overlay_sel_end_col = hc;
 				}
 				overlay_selecting = 0;
-				overlay_copy_selection();
+				overlay_sel_btn2 = 0;
+				if(was_btn2){
+					/* Right-click release: extract selection and issue B command */
+					int s1, sc1, s2, sc2, i;
+					char selected[8192];
+					int total;
+
+					if(overlay_sel_start_line >= 0 && overlay_sel_end_line >= 0){
+						/* Normalize */
+						if(overlay_sel_start_line < overlay_sel_end_line ||
+						   (overlay_sel_start_line == overlay_sel_end_line &&
+						    overlay_sel_start_col <= overlay_sel_end_col)){
+							s1 = overlay_sel_start_line; sc1 = overlay_sel_start_col;
+							s2 = overlay_sel_end_line; sc2 = overlay_sel_end_col;
+						}else{
+							s1 = overlay_sel_end_line; sc1 = overlay_sel_end_col;
+							s2 = overlay_sel_start_line; sc2 = overlay_sel_start_col;
+						}
+
+						total = 0;
+						for(i = s1; i <= s2 && total < (int)sizeof(selected) - 4; i++){
+							char *text;
+							int start_ch, end_ch, len, ch;
+
+							if(overlay_history[i][0] == '\x01')
+								text = overlay_history[i] + 1;
+							else
+								text = overlay_history[i];
+
+							len = strlen(text);
+							start_ch = (i == s1) ? sc1 : 0;
+							end_ch = (i == s2) ? sc2 : len;
+							if(end_ch > len)
+								end_ch = len;
+
+							for(ch = start_ch; ch < end_ch && total < (int)sizeof(selected) - 4; ch++)
+								selected[total++] = text[ch];
+						}
+						selected[total] = '\0';
+
+						/* Strip leading/trailing whitespace */
+						{
+							char *sp = selected;
+							char *ep;
+							while(*sp == ' ' || *sp == '\t' || *sp == '\n')
+								sp++;
+							ep = sp + strlen(sp);
+							while(ep > sp && (ep[-1] == ' ' || ep[-1] == '\t' || ep[-1] == '\n'))
+								ep--;
+							*ep = '\0';
+
+							if(*sp != '\0'){
+								char cmd[8192];
+								char hist[8192];
+								snprint(cmd, sizeof(cmd), "B %s", sp);
+								snprint(hist, sizeof(hist), "\x01%s", cmd);
+								overlay_add_history(hist);
+								bufmode_capture_start();
+								queue_string(cmd);
+								queue_char('\n');
+							}
+						}
+					}
+				}else{
+					overlay_copy_selection();
+				}
 				overlay_sel_start_line = -1;
 				overlay_sel_end_line = -1;
 				needs_redraw = 1;
@@ -3573,6 +3641,8 @@ bufmode:
 
 		if(key == KEY_MOUSE){
 			handle_mouse();
+			if(!queue_empty())
+				return dequeue_char();
 			continue;
 		}
 
