@@ -117,6 +117,7 @@ static int menu_hover = -1;         /* highlighted row (0-based within menu item
 #define MENU_MAX_ITEMS 64
 static struct {
 	char label[256];
+	char shortcut[8];  /* right-aligned shortcut hint, e.g. "(w)" */
 	int type;       /* 0=write, 1=file, 2=cut, 3=snarf, 4=paste, 5=look, 6=regexp */
 	File *file;     /* for type=1 */
 	int sep_after;  /* draw separator line after this item */
@@ -1976,8 +1977,8 @@ menu_build(void)
 	/* Write command (only if file has a name) */
 	if(curfile->name.s[0] != 0){
 		name = Strtoc(&curfile->name);
-		snprint(menu_items[menu_nitems].label,
-			sizeof menu_items[0].label, " write                 (w) ");
+		strcpy(menu_items[menu_nitems].label, " write");
+		strcpy(menu_items[menu_nitems].shortcut, "(w)");
 		menu_items[menu_nitems].type = 0;
 		menu_items[menu_nitems].file = nil;
 		menu_items[menu_nitems].sep_after = 1;
@@ -1986,36 +1987,36 @@ menu_build(void)
 	}
 
 	/* Editing commands */
-	snprint(menu_items[menu_nitems].label,
-		sizeof menu_items[0].label, " cut                   (x) ");
+	strcpy(menu_items[menu_nitems].label, " cut");
+	strcpy(menu_items[menu_nitems].shortcut, "(x)");
 	menu_items[menu_nitems].type = 2;
 	menu_items[menu_nitems].file = nil;
 	menu_items[menu_nitems].sep_after = 0;
 	menu_nitems++;
 
-	snprint(menu_items[menu_nitems].label,
-		sizeof menu_items[0].label, " snarf                 (c) ");
+	strcpy(menu_items[menu_nitems].label, " snarf");
+	strcpy(menu_items[menu_nitems].shortcut, "(c)");
 	menu_items[menu_nitems].type = 3;
 	menu_items[menu_nitems].file = nil;
 	menu_items[menu_nitems].sep_after = 0;
 	menu_nitems++;
 
-	snprint(menu_items[menu_nitems].label,
-		sizeof menu_items[0].label, " paste                 (v) ");
+	strcpy(menu_items[menu_nitems].label, " paste");
+	strcpy(menu_items[menu_nitems].shortcut, "(v)");
 	menu_items[menu_nitems].type = 4;
 	menu_items[menu_nitems].file = nil;
 	menu_items[menu_nitems].sep_after = 0;
 	menu_nitems++;
 
-	snprint(menu_items[menu_nitems].label,
-		sizeof menu_items[0].label, " look                  (l) ");
+	strcpy(menu_items[menu_nitems].label, " look");
+	strcpy(menu_items[menu_nitems].shortcut, "(l)");
 	menu_items[menu_nitems].type = 5;
 	menu_items[menu_nitems].file = nil;
 	menu_items[menu_nitems].sep_after = 0;
 	menu_nitems++;
 
-	snprint(menu_items[menu_nitems].label,
-		sizeof menu_items[0].label, " /regexp               (/) ");
+	strcpy(menu_items[menu_nitems].label, " /regexp");
+	strcpy(menu_items[menu_nitems].shortcut, "(/)");
 	menu_items[menu_nitems].type = 6;
 	menu_items[menu_nitems].file = nil;
 	menu_items[menu_nitems].sep_after = 1;
@@ -2023,15 +2024,25 @@ menu_build(void)
 
 	/* File list */
 	for(i = 0; i < file.nused && menu_nitems < MENU_MAX_ITEMS; i++){
+		char *display;
+		int maxname;
+
 		f = file.filepptr[i];
 		if(f == cmd)
 			continue;
 		name = Strtoc(&f->name);
+		display = name[0] ? name : "(unnamed)";
+		/* Truncate long names from the left to preserve prefix alignment.
+		 * Menu inner width is at most 38; prefix " XY " is 4, suffix " " is 1. */
+		maxname = 38 - 5;
+		if((int)strlen(display) > maxname)
+			display = display + strlen(display) - maxname;
 		snprint(menu_items[menu_nitems].label,
-			sizeof menu_items[0].label, " %c%c %s ",
+			sizeof menu_items[0].label, " %c%c %s",
 			f->mod ? '\'' : ' ',
 			f == curfile ? '.' : ' ',
-			name[0] ? name : "(unnamed)");
+			display);
+		menu_items[menu_nitems].shortcut[0] = '\0';
 		menu_items[menu_nitems].type = 1;
 		menu_items[menu_nitems].file = f;
 		menu_items[menu_nitems].sep_after = 0;
@@ -2063,6 +2074,8 @@ menu_show(int click_x, int click_y)
 	menu_width = title_len + 4;  /* borders + padding */
 	for(i = 0; i < menu_nitems; i++){
 		len = strlen(menu_items[i].label) + 2;  /* borders */
+		if(menu_items[i].shortcut[0])
+			len += strlen(menu_items[i].shortcut) + 1;  /* shortcut + trailing space */
 		if(len > menu_width)
 			menu_width = len;
 	}
@@ -2255,8 +2268,11 @@ draw_menu(void)
 		name[0] ? name : "(unnamed)", pct);
 	free(name);
 	title_len = strlen(title);
-	if(title_len > inner)
+	if(title_len > inner){
+		/* Show right portion (filename end) */
+		memmove(title, title + title_len - inner, inner + 1);
 		title_len = inner;
+	}
 
 	/* Top border with title */
 	row = menu_y;
@@ -2288,11 +2304,23 @@ draw_menu(void)
 		if(menu_hover == i)
 			term_puts(highlight);
 		label_len = strlen(menu_items[i].label);
-		if(label_len > inner)
-			label_len = inner;
-		term_write(menu_items[i].label, label_len);
-		for(j = label_len; j < inner; j++)
-			term_puts(" ");
+		{
+			int sc_len = strlen(menu_items[i].shortcut);
+			int pad;
+
+			if(label_len > inner)
+				term_write(menu_items[i].label + label_len - inner, inner);
+			else
+				term_write(menu_items[i].label, label_len);
+			/* Pad between label and right-aligned shortcut */
+			pad = inner - label_len - sc_len - (sc_len ? 1 : 0);  /* 1 for trailing space */
+			for(j = 0; j < pad; j++)
+				term_puts(" ");
+			if(sc_len){
+				term_write(menu_items[i].shortcut, sc_len);
+				term_puts(" ");
+			}
+		}
 		if(menu_hover == i)
 			term_puts(CSI "27m");  /* un-inverse */
 
