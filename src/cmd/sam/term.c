@@ -1073,6 +1073,40 @@ handle_overlay_key(int key)
 		needs_redraw = 1;
 		break;
 
+	case KEY_PASTE:
+		{
+			Rune *paste_buf;
+			int paste_len, i, maxlen;
+
+			paste_len = read_bracketed_paste(&paste_buf);
+			if(paste_len > 0){
+				maxlen = (int)(sizeof(overlay_input)/sizeof(overlay_input[0])) - 1;
+				/* Truncate paste to fit */
+				if(overlay_inputlen + paste_len > maxlen)
+					paste_len = maxlen - overlay_inputlen;
+				if(paste_len > 0){
+					/* Strip newlines - overlay is single-line */
+					int j = 0;
+					for(i = 0; i < paste_len; i++){
+						if(paste_buf[i] != '\n' && paste_buf[i] != '\r')
+							paste_buf[j++] = paste_buf[i];
+					}
+					paste_len = j;
+					/* Insert at cursor */
+					memmove(&overlay_input[overlay_cursor+paste_len],
+						&overlay_input[overlay_cursor],
+						(overlay_inputlen - overlay_cursor) * sizeof(Rune));
+					memmove(&overlay_input[overlay_cursor], paste_buf,
+						paste_len * sizeof(Rune));
+					overlay_cursor += paste_len;
+					overlay_inputlen += paste_len;
+					needs_redraw = 1;
+				}
+			}
+			free(paste_buf);
+		}
+		break;
+
 	default:
 		if(key >= 32 && overlay_inputlen < (int)(sizeof(overlay_input)/sizeof(overlay_input[0])) - 1){
 			/* Insert at cursor position */
