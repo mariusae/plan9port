@@ -78,6 +78,18 @@ static int overlay_hist_count = 0;
 static int overlay_hist_cap = 0;
 static int overlay_hist_scroll = 0;
 
+/* Overlay mouse selection state */
+static int overlay_selecting = 0;
+static int overlay_sel_start_line = -1;  /* history index */
+static int overlay_sel_start_col = 0;    /* character offset in line */
+static int overlay_sel_end_line = -1;
+static int overlay_sel_end_col = 0;
+
+/* Screen row to history index mapping (set during draw) */
+static int overlay_row_to_hist[256];  /* overlay_row_to_hist[screen_row] = hist index, or -1 */
+static int overlay_row_first = -1;    /* first screen row of overlay history */
+static int overlay_row_last = -1;     /* last screen row of overlay history */
+
 /* Command recall: indices of command lines in overlay_history */
 static int overlay_recall_idx = -1;  /* -1 = not recalling */
 static Rune overlay_saved_input[4096];  /* input saved before recall */
@@ -164,6 +176,8 @@ static void overlay_submit(void);
 static void overlay_add_history(char *line);
 static int overlay_find_cmd(int n);
 static void detect_darkbg(void);
+static void overlay_copy_selection(void);
+static void overlay_screen_to_pos(int sy, int sx, int *hist_line, int *hist_col);
 
 /* Dark/light mode detection via OSC 11 */
 static int term_darkbg = 1;  /* assume dark background by default */
@@ -524,6 +538,157 @@ overlay_add_history(char *line)
 	strcpy(overlay_history[overlay_hist_count], line);
 	overlay_hist_count++;
 	overlay_hist_scroll = 0;
+}
+
+/*
+ * Map screen coordinates to overlay history line and character position.
+ * Returns via pointers; sets *hist_line = -1 if not on a history line.
+ */
+static void
+overlay_screen_to_pos(int sy, int sx, int *hist_line, int *hist_col)
+{
+	char *text;
+	int text_offset, vcol, charpos;
+
+	*hist_line = -1;
+	*hist_col = 0;
+
+	if(sy < 0 || sy >= (int)(sizeof(overlay_row_to_hist)/sizeof(overlay_row_to_hist[0])))
+		return;
+
+	*hist_line = overlay_row_to_hist[sy];
+	if(*hist_line < 0)
+		return;
+
+	/* Map screen column to character offset */
+	if(overlay_history[*hist_line][0] == '\x01'){
+		text = overlay_history[*hist_line] + 1;
+		text_offset = 0;
+	}else{
+		text = overlay_history[*hist_line];
+		text_offset = 2;  /* after █ + space */
+	}
+
+	vcol = text_offset;
+	charpos = 0;
+	while(*text && vcol < sx){
+		if(*text == '\t'){
+			int stop = ((vcol / 8) + 1) * 8;
+			vcol = stop;
+		}else{
+			vcol++;
+		}
+		text++;
+		charpos++;
+	}
+	*hist_col = charpos;
+}
+
+/*
+ * Copy overlay selection to system clipboard via OSC 52.
+ */
+static void
+overlay_copy_selection(void)
+{
+	int s1, sc1, s2, sc2, i;
+	char *collected;
+	int total, cap;
+
+	if(overlay_sel_start_line < 0 || overlay_sel_end_line < 0)
+		return;
+
+	/* Normalize */
+	if(overlay_sel_start_line < overlay_sel_end_line ||
+	   (overlay_sel_start_line == overlay_sel_end_line &&
+	    overlay_sel_start_col <= overlay_sel_end_col)){
+		s1 = overlay_sel_start_line; sc1 = overlay_sel_start_col;
+		s2 = overlay_sel_end_line; sc2 = overlay_sel_end_col;
+	}else{
+		s1 = overlay_sel_end_line; sc1 = overlay_sel_end_col;
+		s2 = overlay_sel_start_line; sc2 = overlay_sel_start_col;
+	}
+
+	if(s1 == s2 && sc1 == sc2)
+		return;
+
+	/* Collect selected text */
+	cap = 4096;
+	collected = malloc(cap);
+	if(!collected)
+		return;
+	total = 0;
+
+	for(i = s1; i <= s2; i++){
+		char *text;
+		int start_ch, end_ch, len, ch;
+
+		if(overlay_history[i][0] == '\x01')
+			text = overlay_history[i] + 1;
+		else
+			text = overlay_history[i];
+
+		len = strlen(text);
+		start_ch = (i == s1) ? sc1 : 0;
+		end_ch = (i == s2) ? sc2 : len;
+		if(end_ch > len)
+			end_ch = len;
+
+		for(ch = start_ch; ch < end_ch; ch++){
+			if(total + 2 >= cap){
+				cap *= 2;
+				collected = realloc(collected, cap);
+				if(!collected)
+					return;
+			}
+			collected[total++] = text[ch];
+		}
+
+		/* Add newline between lines */
+		if(i < s2){
+			if(total + 2 >= cap){
+				cap *= 2;
+				collected = realloc(collected, cap);
+				if(!collected)
+					return;
+			}
+			collected[total++] = '\n';
+		}
+	}
+	collected[total] = '\0';
+
+	/* Base64 encode and send OSC 52 */
+	{
+		static char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+		int b64len = ((total + 2) / 3) * 4;
+		char *b64text = malloc(b64len + 1);
+		int j = 0;
+
+		if(!b64text){
+			free(collected);
+			return;
+		}
+
+		for(i = 0; i < total; i += 3){
+			int a = (unsigned char)collected[i];
+			int b = (i + 1 < total) ? (unsigned char)collected[i + 1] : 0;
+			int c = (i + 2 < total) ? (unsigned char)collected[i + 2] : 0;
+
+			b64text[j++] = b64[a >> 2];
+			b64text[j++] = b64[((a & 3) << 4) | (b >> 4)];
+			b64text[j++] = (i + 1 < total) ? b64[((b & 15) << 2) | (c >> 6)] : '=';
+			b64text[j++] = (i + 2 < total) ? b64[c & 63] : '=';
+		}
+		b64text[j] = '\0';
+
+		term_puts("\033]52;c;");
+		term_puts(b64text);
+		term_puts("\007");
+		term_flush();
+
+		free(b64text);
+	}
+
+	free(collected);
 }
 
 /*
@@ -1735,6 +1900,11 @@ draw_bufmode(void)
 
 		orow = content_rows;
 
+		/* Initialize row-to-hist mapping */
+		memset(overlay_row_to_hist, -1, sizeof(overlay_row_to_hist));
+		overlay_row_first = -1;
+		overlay_row_last = -1;
+
 		/* Top padding line */
 		term_goto(orow, 0);
 		term_puts(overlay_bg);
@@ -1755,62 +1925,104 @@ draw_bufmode(void)
 
 		prompt_row = term_rows - 2;  /* second-to-last row */
 
+		/* Normalize selection so s1/sc1 <= s2/sc2 */
+		{
+			int s1, sc1, s2, sc2;
+			if(overlay_sel_start_line < 0 || overlay_sel_end_line < 0){
+				s1 = s2 = sc1 = sc2 = -1;
+			}else if(overlay_sel_start_line < overlay_sel_end_line ||
+			         (overlay_sel_start_line == overlay_sel_end_line &&
+			          overlay_sel_start_col <= overlay_sel_end_col)){
+				s1 = overlay_sel_start_line; sc1 = overlay_sel_start_col;
+				s2 = overlay_sel_end_line; sc2 = overlay_sel_end_col;
+			}else{
+				s1 = overlay_sel_end_line; sc1 = overlay_sel_end_col;
+				s2 = overlay_sel_start_line; sc2 = overlay_sel_start_col;
+			}
+
 		for(i = hist_start; i < overlay_hist_count - overlay_hist_scroll && orow < prompt_row; i++){
+			char *text;
+			int text_offset;  /* column offset for gutter */
+			int in_sel;
+
+			/* Record mapping */
+			if(orow < (int)(sizeof(overlay_row_to_hist)/sizeof(overlay_row_to_hist[0])))
+				overlay_row_to_hist[orow] = i;
+			if(overlay_row_first < 0)
+				overlay_row_first = orow;
+			overlay_row_last = orow;
+
 			term_goto(orow, 0);
 			term_puts(overlay_bg);
 			if(overlay_history[i][0] == '\x01'){
 				/* Command line: flush left, bold */
 				term_puts(cmd_fg);
 				term_puts(overlay_bg);
-				{
-					char *s = overlay_history[i] + 1;
-					int vcol = 0;
-					while(*s && vcol < term_cols){
-						if(*s == '\t'){
-							int stop = ((vcol / 8) + 1) * 8;
-							if(stop > term_cols) stop = term_cols;
-							while(vcol < stop){
-								term_puts(" ");
-								vcol++;
-							}
-						}else{
-							term_write(s, 1);
-							vcol++;
-						}
-						s++;
-					}
-					for(j = vcol; j < term_cols; j++)
-						term_puts(" ");
-				}
+				text = overlay_history[i] + 1;
+				text_offset = 0;
 			}else{
 				/* Output line: full block gutter + text */
 				term_puts(output_fg);
 				term_puts(overlay_bg);
 				term_puts("\xe2\x96\x88 ");  /* U+2588 █ + space */
-				{
-					char *s = overlay_history[i];
-					int vcol = 2;
-					while(*s && vcol < term_cols){
-						if(*s == '\t'){
-							int stop = ((vcol / 8) + 1) * 8;
-							if(stop > term_cols) stop = term_cols;
-							while(vcol < stop){
-								term_puts(" ");
-								vcol++;
-							}
-						}else{
-							term_write(s, 1);
+				text = overlay_history[i];
+				text_offset = 2;
+			}
+
+			/* Render text character by character with selection highlighting */
+			{
+				char *s = text;
+				int vcol = text_offset;
+				int charpos = 0;
+				while(*s && vcol < term_cols){
+					/* Check if this character is in selection */
+					in_sel = 0;
+					if(s1 >= 0 && i >= s1 && i <= s2){
+						if(i > s1 && i < s2)
+							in_sel = 1;
+						else if(i == s1 && i == s2)
+							in_sel = (charpos >= sc1 && charpos < sc2);
+						else if(i == s1)
+							in_sel = (charpos >= sc1);
+						else /* i == s2 */
+							in_sel = (charpos < sc2);
+					}
+
+					if(in_sel)
+						term_puts(CSI "7m");  /* inverse */
+
+					if(*s == '\t'){
+						int stop = ((vcol / 8) + 1) * 8;
+						if(stop > term_cols) stop = term_cols;
+						while(vcol < stop){
+							term_puts(" ");
 							vcol++;
 						}
-						s++;
+					}else{
+						term_write(s, 1);
+						vcol++;
 					}
-					for(j = vcol; j < term_cols; j++)
-						term_puts(" ");
+
+					if(in_sel){
+						term_puts(CSI "27m");  /* un-inverse */
+						/* Restore colors */
+						if(overlay_history[i][0] == '\x01'){
+							term_puts(cmd_fg);
+						}else{
+							term_puts(output_fg);
+						}
+						term_puts(overlay_bg);
+					}
+					s++;
+					charpos++;
 				}
+				for(j = vcol; j < term_cols; j++)
+					term_puts(" ");
 			}
 			term_puts(CSI "0m");
 			orow++;
 		}
+		} /* end selection normalization scope */
 
 		/* Draw prompt line with background */
 		term_goto(prompt_row, 0);
@@ -2296,6 +2508,9 @@ handle_bufkey(int key)
 			overlay_cursor = 0;
 			overlay_hist_scroll = 0;
 			overlay_recall_idx = -1;
+			overlay_selecting = 0;
+			overlay_sel_start_line = -1;
+			overlay_sel_end_line = -1;
 			detect_darkbg();
 		}
 		needs_redraw = 1;
@@ -2769,51 +2984,100 @@ handle_mouse(void)
 	x--;
 	y--;
 
-	/* If overlay is visible, handle scroll events in overlay */
-	if(overlay_visible && (button == 64 || button == 65)){
-		int oh, hist_visible, max_scroll;
-		oh = 1 + overlay_hist_count + 1 + 1;
-		if(oh > term_rows / 2)
-			oh = term_rows / 2;
-		if(oh < 3)
-			oh = 3;
-		hist_visible = oh - 3;
-		max_scroll = overlay_hist_count - hist_visible;
-		if(max_scroll < 0)
-			max_scroll = 0;
-		if(button == 64){
-			/* Scroll up - show older history */
-			overlay_hist_scroll += 3;
-			if(overlay_hist_scroll > max_scroll)
-				overlay_hist_scroll = max_scroll;
-		}else{
-			/* Scroll down - show newer history */
-			overlay_hist_scroll -= 3;
-			if(overlay_hist_scroll < 0)
-				overlay_hist_scroll = 0;
-		}
-		needs_redraw = 1;
-		return;
-	}
-
-	/* If overlay is visible and click is in the content area, dismiss overlay */
-	if(overlay_visible && pressed){
-		int overlay_height;
+	/* If overlay is visible, handle mouse events in overlay */
+	if(overlay_visible){
+		int overlay_height, in_overlay;
 		overlay_height = 1 + overlay_hist_count + 1 + 1;
 		if(overlay_height > term_rows / 2)
 			overlay_height = term_rows / 2;
 		if(overlay_height < 3)
 			overlay_height = 3;
-		if(y < term_rows - overlay_height){
-			overlay_visible = 0;
-			overlay_recall_idx = -1;
+		in_overlay = (y >= term_rows - overlay_height);
+
+		/* Scroll events */
+		if(button == 64 || button == 65){
+			int oh, hist_visible, max_scroll;
+			oh = overlay_height;
+			hist_visible = oh - 3;
+			max_scroll = overlay_hist_count - hist_visible;
+			if(max_scroll < 0)
+				max_scroll = 0;
+			if(button == 64){
+				overlay_hist_scroll += 3;
+				if(overlay_hist_scroll > max_scroll)
+					overlay_hist_scroll = max_scroll;
+			}else{
+				overlay_hist_scroll -= 3;
+				if(overlay_hist_scroll < 0)
+					overlay_hist_scroll = 0;
+			}
 			needs_redraw = 1;
-			/* Fall through to process click in buffer */
-		}else{
-			/* Click inside overlay area — ignore */
 			return;
 		}
+
+		/* Drag events (motion with button held) */
+		if(button >= 32 && button < 64){
+			if(overlay_selecting){
+				int hl, hc;
+				overlay_screen_to_pos(y, x, &hl, &hc);
+				if(hl >= 0){
+					overlay_sel_end_line = hl;
+					overlay_sel_end_col = hc;
+					needs_redraw = 1;
+				}
+			}
+			return;
+		}
+
+		/* Click in buffer area above overlay: dismiss */
+		if(!in_overlay && pressed){
+			overlay_visible = 0;
+			overlay_recall_idx = -1;
+			overlay_selecting = 0;
+			overlay_sel_start_line = -1;
+			overlay_sel_end_line = -1;
+			needs_redraw = 1;
+			/* Fall through to process click in buffer */
+			goto buffer_click;
+		}
+
+		/* Click inside overlay: start selection */
+		if(in_overlay && pressed && (button & 3) == 0){
+			int hl, hc;
+			overlay_screen_to_pos(y, x, &hl, &hc);
+			if(hl >= 0){
+				overlay_selecting = 1;
+				overlay_sel_start_line = hl;
+				overlay_sel_start_col = hc;
+				overlay_sel_end_line = hl;
+				overlay_sel_end_col = hc;
+				needs_redraw = 1;
+			}
+			return;
+		}
+
+		/* Release inside overlay: finish selection, copy */
+		if(!pressed){
+			if(overlay_selecting){
+				int hl, hc;
+				overlay_screen_to_pos(y, x, &hl, &hc);
+				if(hl >= 0){
+					overlay_sel_end_line = hl;
+					overlay_sel_end_col = hc;
+				}
+				overlay_selecting = 0;
+				overlay_copy_selection();
+				overlay_sel_start_line = -1;
+				overlay_sel_end_line = -1;
+				needs_redraw = 1;
+			}
+			return;
+		}
+
+		return;
 	}
+
+buffer_click:
 
 	if(!curfile)
 		return;
