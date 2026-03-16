@@ -3868,7 +3868,7 @@ buffer_click:
 			}
 		}
 		needs_redraw = 1;
-	}else if(btn == 2 && pressed){
+	}else if(button == 2 && pressed){
 		/* Right-click press: show context menu */
 		menu_show(x, y);
 	}
