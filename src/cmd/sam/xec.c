@@ -403,6 +403,8 @@ display(File *f)
 		c = Strtoc(tmprstr(genbuf, np+1));
 		if(downloaded)
 			termwrite(c);
+		else if(in_bufmode() && bufmode_capture_append(c))
+			;  /* captured for overlay */
 		else
 			Write(1, c, strlen(c));
 		free(c);

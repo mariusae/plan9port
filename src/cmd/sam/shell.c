@@ -38,7 +38,11 @@ plan9(File *f, int type, String *s, int nest)
 		samerr(errfile);
 		remove(errfile);
 	}
-	if(type!='!' && pipe(pipe1)==-1)
+	if(type=='!' && !downloaded && in_bufmode()){
+		/* In buffer mode, pipe ! command output for capture */
+		if(pipe(pipe1)==-1)
+			error(Epipe);
+	}else if(type!='!' && pipe(pipe1)==-1)
 		error(Epipe);
 	if(type=='|')
 		snarf(f, addr.r.p1, addr.r.p2, &plan9buf, 1);
@@ -60,7 +64,16 @@ plan9(File *f, int type, String *s, int nest)
 				close(fd);
 			}
 		}
-		if(type != '!') {
+		if(type=='!' && !downloaded && in_bufmode()){
+			/* Redirect stdout/stderr to pipe for capture */
+			dup(pipe1[1], 1);
+			dup(pipe1[1], 2);
+			close(pipe1[0]);
+			close(pipe1[1]);
+			fd = open("/dev/null", 0);
+			dup(fd, 0);
+			close(fd);
+		}else if(type != '!') {
 			if(type=='<' || type=='|')
 				dup(pipe1[1], 1);
 			else if(type == '>')
@@ -128,6 +141,17 @@ plan9(File *f, int type, String *s, int nest)
 		writeio(f);
 		bpipeok = 0;
 		closeio((Posn)-1);
+	}
+	if(type=='!' && !downloaded && in_bufmode()){
+		/* Read piped output from ! command and capture it */
+		char buf[BLOCKSIZE];
+		int n;
+		close(pipe1[1]);
+		while((n = read(pipe1[0], buf, sizeof buf - 1)) > 0){
+			buf[n] = '\0';
+			bufmode_capture_append(buf);
+		}
+		close(pipe1[0]);
 	}
 	retcode = waitfor(pid);
 	if(type=='|' || type=='<')

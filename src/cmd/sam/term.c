@@ -63,9 +63,26 @@ static char status_msg[256];
 static struct timeval status_expire = {0, 0};
 
 /* Output capture for buffer mode operations (e.g., Ctrl-S write) */
-static char capture_buf[1024];
+static char capture_buf[8192];
 static int capture_len = 0;
 static int capturing = 0;
+
+/* Command overlay window state */
+static int overlay_visible = 0;
+static Rune overlay_input[4096];
+static int overlay_inputlen = 0;
+static int overlay_cursor = 0;  /* cursor position within overlay_input */
+
+#define OVERLAY_HIST_LINES 256
+#define OVERLAY_HIST_COLS  512
+static char overlay_history[OVERLAY_HIST_LINES][OVERLAY_HIST_COLS];
+static int overlay_hist_count = 0;
+static int overlay_hist_scroll = 0;
+
+/* Command recall: indices of command lines in overlay_history */
+static int overlay_recall_idx = -1;  /* -1 = not recalling */
+static Rune overlay_saved_input[4096];  /* input saved before recall */
+static int overlay_saved_len = 0;
 
 /* Per-file view state */
 #define MAX_FILE_STATES 64
@@ -143,6 +160,9 @@ static void save_file_state(File *f);
 static void restore_file_state(File *f);
 static int read_bracketed_paste(Rune **bufp);
 static int iswordchar(Rune ch);
+static void handle_overlay_key(int key);
+static void overlay_submit(void);
+static void overlay_add_history(char *line);
 
 /* Output buffer for terminal */
 static char outbuf[16384];
@@ -260,6 +280,7 @@ enter_bufmode(void)
 	term_flush();
 	term_raw = 1;
 	viewmode = ModeBuf;
+	overlay_visible = 0;
 	needs_redraw = 1;
 
 	/* Handle per-file view state preservation */
@@ -306,6 +327,7 @@ exit_bufmode(void)
 	tcsetattr(0, TCSAFLUSH, &cmd_termios);
 	term_raw = 0;
 	viewmode = ModeCmd;
+	overlay_visible = 0;
 }
 
 void
@@ -481,6 +503,296 @@ bufmode_capture_append(char *s)
 		capture_buf[capture_len] = '\0';
 	}
 	return 1;
+}
+
+/*
+ * Add a line to the overlay history ring buffer.
+ */
+static void
+overlay_add_history(char *line)
+{
+	if(overlay_hist_count < OVERLAY_HIST_LINES){
+		strncpy(overlay_history[overlay_hist_count], line, OVERLAY_HIST_COLS - 1);
+		overlay_history[overlay_hist_count][OVERLAY_HIST_COLS - 1] = '\0';
+		overlay_hist_count++;
+	}else{
+		/* Shift everything up, discard oldest */
+		int i;
+		for(i = 0; i < OVERLAY_HIST_LINES - 1; i++)
+			memmove(overlay_history[i], overlay_history[i+1], OVERLAY_HIST_COLS);
+		strncpy(overlay_history[OVERLAY_HIST_LINES - 1], line, OVERLAY_HIST_COLS - 1);
+		overlay_history[OVERLAY_HIST_LINES - 1][OVERLAY_HIST_COLS - 1] = '\0';
+	}
+	overlay_hist_scroll = 0;
+}
+
+/*
+ * Submit the current overlay input as a sam command.
+ */
+static void
+overlay_submit(void)
+{
+	char cmd[8192];
+	char prompt_line[OVERLAY_HIST_COLS];
+	int i, n;
+
+	if(overlay_inputlen == 0)
+		return;
+
+	/* Convert Rune input to UTF-8 */
+	n = 0;
+	for(i = 0; i < overlay_inputlen && n < (int)sizeof(cmd) - 2; i++){
+		char buf[UTFmax];
+		int nb = runetochar(buf, &overlay_input[i]);
+		if(n + nb < (int)sizeof(cmd) - 2){
+			memcpy(cmd + n, buf, nb);
+			n += nb;
+		}
+	}
+	cmd[n] = '\0';
+
+	/* Add command to history with \x01 marker prefix for command lines */
+	snprint(prompt_line, sizeof(prompt_line), "\x01%s", cmd);
+	overlay_add_history(prompt_line);
+
+	/* Execute: capture output, queue command */
+	bufmode_capture_start();
+	queue_string(cmd);
+	queue_char('\n');
+
+	/* Clear input */
+	overlay_inputlen = 0;
+	overlay_cursor = 0;
+	overlay_hist_scroll = 0;
+	needs_redraw = 1;
+}
+
+/*
+ * Handle a key press when the overlay is visible.
+ */
+/*
+ * Find the nth command line in overlay history, searching backwards.
+ * n=0 is the most recent command, n=1 the one before, etc.
+ * Returns the history index, or -1 if not found.
+ */
+static int
+overlay_find_cmd(int n)
+{
+	int i, count;
+
+	count = 0;
+	for(i = overlay_hist_count - 1; i >= 0; i--){
+		if(overlay_history[i][0] == '\x01'){
+			if(count == n)
+				return i;
+			count++;
+		}
+	}
+	return -1;
+}
+
+/*
+ * Load a command from history into the overlay input buffer.
+ */
+static void
+overlay_load_cmd(int hist_idx)
+{
+	char *s;
+	int i, n;
+	Rune r;
+
+	s = overlay_history[hist_idx] + 1;  /* skip \x01 marker */
+	overlay_inputlen = 0;
+	n = strlen(s);
+	i = 0;
+	while(i < n && overlay_inputlen < (int)(sizeof(overlay_input)/sizeof(overlay_input[0])) - 1){
+		i += chartorune(&r, s + i);
+		overlay_input[overlay_inputlen++] = r;
+	}
+	overlay_cursor = overlay_inputlen;
+}
+
+static void
+handle_overlay_key(int key)
+{
+	switch(key){
+	case 7:  /* Ctrl-G */
+	case KEY_ESC:
+		overlay_visible = 0;
+		overlay_recall_idx = -1;
+		needs_redraw = 1;
+		break;
+
+	case '\r':
+	case '\n':
+		overlay_recall_idx = -1;
+		overlay_submit();
+		break;
+
+	case 127:  /* DEL */
+	case 8:    /* Ctrl-H / Backspace */
+		if(overlay_cursor > 0){
+			memmove(&overlay_input[overlay_cursor-1], &overlay_input[overlay_cursor],
+				(overlay_inputlen - overlay_cursor) * sizeof(Rune));
+			overlay_cursor--;
+			overlay_inputlen--;
+			needs_redraw = 1;
+		}
+		break;
+
+	case KEY_DEL:  /* Forward delete */
+		if(overlay_cursor < overlay_inputlen){
+			memmove(&overlay_input[overlay_cursor], &overlay_input[overlay_cursor+1],
+				(overlay_inputlen - overlay_cursor - 1) * sizeof(Rune));
+			overlay_inputlen--;
+			needs_redraw = 1;
+		}
+		break;
+
+	case KEY_LEFT:
+	case 2:  /* Ctrl-B */
+		if(overlay_cursor > 0){
+			overlay_cursor--;
+			needs_redraw = 1;
+		}
+		break;
+
+	case KEY_RIGHT:
+	case 6:  /* Ctrl-F */
+		if(overlay_cursor < overlay_inputlen){
+			overlay_cursor++;
+			needs_redraw = 1;
+		}
+		break;
+
+	case 1:  /* Ctrl-A - beginning of line */
+	case KEY_HOME:
+		if(overlay_cursor != 0){
+			overlay_cursor = 0;
+			needs_redraw = 1;
+		}
+		break;
+
+	case 5:  /* Ctrl-E - end of line */
+	case KEY_END:
+		if(overlay_cursor != overlay_inputlen){
+			overlay_cursor = overlay_inputlen;
+			needs_redraw = 1;
+		}
+		break;
+
+	case KEY_UP:
+	case 16:  /* Ctrl-P */
+		{
+			int next_recall, idx;
+			next_recall = overlay_recall_idx + 1;
+			idx = overlay_find_cmd(next_recall);
+			if(idx >= 0){
+				if(overlay_recall_idx == -1){
+					/* Save current input before first recall */
+					memmove(overlay_saved_input, overlay_input,
+						overlay_inputlen * sizeof(Rune));
+					overlay_saved_len = overlay_inputlen;
+				}
+				overlay_recall_idx = next_recall;
+				overlay_load_cmd(idx);
+				needs_redraw = 1;
+			}
+		}
+		break;
+
+	case KEY_DOWN:
+	case 14:  /* Ctrl-N */
+		if(overlay_recall_idx > 0){
+			int idx;
+			overlay_recall_idx--;
+			idx = overlay_find_cmd(overlay_recall_idx);
+			if(idx >= 0)
+				overlay_load_cmd(idx);
+			needs_redraw = 1;
+		}else if(overlay_recall_idx == 0){
+			/* Restore saved input */
+			overlay_recall_idx = -1;
+			memmove(overlay_input, overlay_saved_input,
+				overlay_saved_len * sizeof(Rune));
+			overlay_inputlen = overlay_saved_len;
+			overlay_cursor = overlay_inputlen;
+			needs_redraw = 1;
+		}
+		break;
+
+	case 21:  /* Ctrl-U - kill line */
+		overlay_inputlen = 0;
+		overlay_cursor = 0;
+		needs_redraw = 1;
+		break;
+
+	case 23:  /* Ctrl-W - kill word */
+		if(overlay_cursor > 0){
+			int old_cursor = overlay_cursor;
+			/* Skip trailing spaces */
+			while(overlay_cursor > 0 && overlay_input[overlay_cursor-1] == ' ')
+				overlay_cursor--;
+			/* Delete word */
+			while(overlay_cursor > 0 && overlay_input[overlay_cursor-1] != ' ')
+				overlay_cursor--;
+			memmove(&overlay_input[overlay_cursor], &overlay_input[old_cursor],
+				(overlay_inputlen - old_cursor) * sizeof(Rune));
+			overlay_inputlen -= (old_cursor - overlay_cursor);
+			needs_redraw = 1;
+		}
+		break;
+
+	case 11:  /* Ctrl-K - clear history */
+		overlay_hist_count = 0;
+		overlay_hist_scroll = 0;
+		overlay_recall_idx = -1;
+		needs_redraw = 1;
+		break;
+
+	case KEY_PGUP:
+		{
+			int oh, hist_visible, max_scroll;
+			oh = 1 + overlay_hist_count + 1 + 1;
+			if(oh > term_rows / 2)
+				oh = term_rows / 2;
+			if(oh < 3)
+				oh = 3;
+			hist_visible = oh - 3;
+			max_scroll = overlay_hist_count - hist_visible;
+			if(max_scroll < 0)
+				max_scroll = 0;
+			overlay_hist_scroll += 5;
+			if(overlay_hist_scroll > max_scroll)
+				overlay_hist_scroll = max_scroll;
+		}
+		needs_redraw = 1;
+		break;
+
+	case KEY_PGDN:
+		overlay_hist_scroll -= 5;
+		if(overlay_hist_scroll < 0)
+			overlay_hist_scroll = 0;
+		needs_redraw = 1;
+		break;
+
+	default:
+		if(key >= 32 && overlay_inputlen < (int)(sizeof(overlay_input)/sizeof(overlay_input[0])) - 1){
+			/* Insert at cursor position */
+			memmove(&overlay_input[overlay_cursor+1], &overlay_input[overlay_cursor],
+				(overlay_inputlen - overlay_cursor) * sizeof(Rune));
+			overlay_input[overlay_cursor] = key;
+			overlay_cursor++;
+			overlay_inputlen++;
+			needs_redraw = 1;
+		}else if(key < 32 || key >= KEY_UP){
+			/* Unknown control key or special key: dismiss overlay, pass to buffer */
+			overlay_visible = 0;
+			overlay_recall_idx = -1;
+			handle_bufkey(key);
+		}
+		break;
+	}
 }
 
 /*
@@ -1196,6 +1508,8 @@ draw_bufmode(void)
 	Posn p;
 	Rune ch;
 	int w;
+	int content_rows;
+	int overlay_height;
 
 	if(!curfile){
 		term_clear();
@@ -1213,6 +1527,18 @@ draw_bufmode(void)
 		last_file = curfile;
 	}
 
+	/* Compute overlay height: pad + history + prompt + pad, max half screen */
+	overlay_height = 0;
+	if(overlay_visible){
+		overlay_height = 1 + overlay_hist_count + 1 + 1;  /* top pad + history + prompt + bottom pad */
+		if(overlay_height > term_rows / 2)
+			overlay_height = term_rows / 2;
+		if(overlay_height < 3)
+			overlay_height = 3;  /* at minimum: pad + prompt + pad */
+	}
+
+	content_rows = term_rows - overlay_height;
+
 	buf_scrollto(buf_cursor);
 	term_clear();
 	term_puts(CSI "0m");  /* Reset attributes to ensure clean state */
@@ -1223,7 +1549,7 @@ draw_bufmode(void)
 	col = 0;
 	term_goto(row, col);
 
-	while(row < term_rows && p <= curfile->b.nc){
+	while(row < content_rows && p <= curfile->b.nc){
 		if(p >= curfile->b.nc)
 			break;
 
@@ -1238,7 +1564,7 @@ draw_bufmode(void)
 			p++;
 			row++;
 			col = 0;
-			if(row < term_rows)
+			if(row < content_rows)
 				term_goto(row, col);
 			continue;
 		}
@@ -1249,7 +1575,7 @@ draw_bufmode(void)
 			/* Wrap to next line */
 			row++;
 			col = 0;
-			if(row >= term_rows)
+			if(row >= content_rows)
 				break;
 			term_goto(row, col);
 		}
@@ -1280,28 +1606,129 @@ draw_bufmode(void)
 		p++;
 	}
 
-	/* Draw status message at bottom if active */
-	if(status_active()){
-		int slen, i;
-		term_goto(term_rows - 1, 0);
-		term_puts(CSI "7m");  /* inverse video */
-		slen = strlen(status_msg);
-		if(slen > term_cols)
-			slen = term_cols;
-		term_write(status_msg, slen);
-		/* Pad with spaces to fill the line */
-		for(i = slen; i < term_cols; i++)
+	if(overlay_visible){
+		/* Draw overlay window with subtle background */
+		int orow, i, j, hist_visible, hist_start, prompt_row;
+
+		/* Background: bright black (adapts to terminal theme) */
+		#define OVERLAY_BG CSI "48;2;65;67;75m"
+
+		orow = content_rows;
+
+		/* Top padding line */
+		term_goto(orow, 0);
+		term_puts(OVERLAY_BG);
+		for(j = 0; j < term_cols; j++)
 			term_puts(" ");
 		term_puts(CSI "0m");
-	}
+		orow++;
 
-	/* Position cursor */
-	row = pos_to_screen(buf_cursor, &col);
-	if(row >= term_rows)
-		row = term_rows - 1;
-	if(col >= term_cols)
-		col = term_cols - 1;
-	term_goto(row, col);
+		/* How many history lines can we show? */
+		hist_visible = overlay_height - 3;  /* minus top pad, prompt, bottom pad */
+		if(hist_visible < 0)
+			hist_visible = 0;
+
+		/* Compute which history lines to show */
+		hist_start = overlay_hist_count - overlay_hist_scroll - hist_visible;
+		if(hist_start < 0)
+			hist_start = 0;
+
+		prompt_row = term_rows - 2;  /* second-to-last row */
+
+		for(i = hist_start; i < overlay_hist_count - overlay_hist_scroll && orow < prompt_row; i++){
+			int slen;
+			term_goto(orow, 0);
+			term_puts(OVERLAY_BG);
+			if(overlay_history[i][0] == '\x01'){
+				/* Command line: bold blue › then normal text */
+				term_puts(CSI "1;34m" OVERLAY_BG);
+				term_puts("\xe2\x9d\xaf ");  /* U+276F ❯ + space */
+				term_puts(CSI "0m" OVERLAY_BG);
+				slen = strlen(overlay_history[i] + 1);
+				if(slen > term_cols - 2)
+					slen = term_cols - 2;
+				term_write(overlay_history[i] + 1, slen);
+				for(j = slen + 2; j < term_cols; j++)
+					term_puts(" ");
+			}else{
+				/* Output line: slightly muted, indented 2 spaces */
+				term_puts(CSI "38;2;180;180;190m" OVERLAY_BG);
+				term_puts("  ");
+				slen = strlen(overlay_history[i]);
+				if(slen > term_cols - 2)
+					slen = term_cols - 2;
+				term_write(overlay_history[i], slen);
+				for(j = slen + 2; j < term_cols; j++)
+					term_puts(" ");
+			}
+			term_puts(CSI "0m");
+			orow++;
+		}
+
+		/* Draw prompt line with background */
+		term_goto(prompt_row, 0);
+		term_puts(OVERLAY_BG);
+		term_puts(CSI "1;34m" OVERLAY_BG);  /* bold blue on overlay bg */
+		term_puts("\xe2\x9d\xaf ");  /* U+276F ❯ + space */
+		term_puts(CSI "0m" OVERLAY_BG);
+
+		/* Draw current input, tracking cursor column */
+		col = 2;
+		{
+			int cursor_col = 2;
+			for(i = 0; i < overlay_inputlen && col < term_cols; i++){
+				char buf[UTFmax + 1];
+				int n = runetochar(buf, &overlay_input[i]);
+				buf[n] = 0;
+				if(i == overlay_cursor)
+					cursor_col = col;
+				term_puts(buf);
+				col += charwidth(overlay_input[i], col);
+			}
+			if(overlay_cursor >= overlay_inputlen)
+				cursor_col = col;
+
+			/* Pad rest of prompt line with background */
+			for(i = col; i < term_cols; i++)
+				term_puts(" ");
+			term_puts(CSI "0m");
+
+			/* Bottom padding line */
+			term_goto(term_rows - 1, 0);
+			term_puts(OVERLAY_BG);
+			for(i = 0; i < term_cols; i++)
+				term_puts(" ");
+			term_puts(CSI "0m");
+
+			/* Position cursor on prompt line */
+			term_goto(prompt_row, cursor_col);
+		}
+
+		#undef OVERLAY_BG
+	}else{
+		/* Draw status message at bottom if active */
+		if(status_active()){
+			int slen, i;
+			term_goto(term_rows - 1, 0);
+			term_puts(CSI "7m");  /* inverse video */
+			slen = strlen(status_msg);
+			if(slen > term_cols)
+				slen = term_cols;
+			term_write(status_msg, slen);
+			/* Pad with spaces to fill the line */
+			for(i = slen; i < term_cols; i++)
+				term_puts(" ");
+			term_puts(CSI "0m");
+		}
+
+		/* Position cursor */
+		row = pos_to_screen(buf_cursor, &col);
+		if(row >= term_rows)
+			row = term_rows - 1;
+		if(col >= term_cols)
+			col = term_cols - 1;
+		term_goto(row, col);
+	}
 
 	term_flush();
 }
@@ -1545,8 +1972,13 @@ handle_bufkey(int key)
 
 	switch(key){
 	case KEY_ESC:
-		/* Preserve selection (dot) when exiting buffer mode */
-		exit_bufmode();
+		if(overlay_visible){
+			overlay_visible = 0;
+			needs_redraw = 1;
+		}else{
+			/* Preserve selection (dot) when exiting buffer mode */
+			exit_bufmode();
+		}
 		break;
 
 	case 0:  /* Ctrl-Space - toggle mark for selection */
@@ -1713,8 +2145,15 @@ handle_bufkey(int key)
 		}
 		break;
 
-	case 7:  /* Ctrl-G - exit buffer mode (same as ESC) */
-		exit_bufmode();
+	case 7:  /* Ctrl-G - toggle command overlay */
+		overlay_visible = !overlay_visible;
+		if(overlay_visible){
+			overlay_inputlen = 0;
+			overlay_cursor = 0;
+			overlay_hist_scroll = 0;
+			overlay_recall_idx = -1;
+		}
+		needs_redraw = 1;
 		break;
 
 	case 12:  /* Ctrl-L - look (find next occurrence of selection) */
@@ -2185,6 +2624,52 @@ handle_mouse(void)
 	x--;
 	y--;
 
+	/* If overlay is visible, handle scroll events in overlay */
+	if(overlay_visible && (button == 64 || button == 65)){
+		int oh, hist_visible, max_scroll;
+		oh = 1 + overlay_hist_count + 1 + 1;
+		if(oh > term_rows / 2)
+			oh = term_rows / 2;
+		if(oh < 3)
+			oh = 3;
+		hist_visible = oh - 3;
+		max_scroll = overlay_hist_count - hist_visible;
+		if(max_scroll < 0)
+			max_scroll = 0;
+		if(button == 64){
+			/* Scroll up - show older history */
+			overlay_hist_scroll += 3;
+			if(overlay_hist_scroll > max_scroll)
+				overlay_hist_scroll = max_scroll;
+		}else{
+			/* Scroll down - show newer history */
+			overlay_hist_scroll -= 3;
+			if(overlay_hist_scroll < 0)
+				overlay_hist_scroll = 0;
+		}
+		needs_redraw = 1;
+		return;
+	}
+
+	/* If overlay is visible and click is in the content area, dismiss overlay */
+	if(overlay_visible && pressed){
+		int overlay_height;
+		overlay_height = 1 + overlay_hist_count + 1 + 1;
+		if(overlay_height > term_rows / 2)
+			overlay_height = term_rows / 2;
+		if(overlay_height < 3)
+			overlay_height = 3;
+		if(y < term_rows - overlay_height){
+			overlay_visible = 0;
+			overlay_recall_idx = -1;
+			needs_redraw = 1;
+			/* Fall through to process click in buffer */
+		}else{
+			/* Click inside overlay area — ignore */
+			return;
+		}
+	}
+
 	if(!curfile)
 		return;
 
@@ -2409,7 +2894,6 @@ terminputc(void)
 
 			switch(r){
 			case 27:  /* ESC */
-			case 7:   /* Ctrl-G */
 				enter_bufmode();
 				goto bufmode;
 
@@ -2481,6 +2965,33 @@ terminputc(void)
 bufmode:
 	/* Buffer mode */
 	for(;;){
+		/* Collect captured output after command execution */
+		if(capturing){
+			char *output = bufmode_capture_end();
+			if(output){
+				char *p, *nl;
+				p = output;
+				while(*p){
+					nl = strchr(p, '\n');
+					if(nl){
+						*nl = '\0';
+						overlay_add_history(p);
+						p = nl + 1;
+					}else{
+						overlay_add_history(p);
+						break;
+					}
+				}
+			}
+			/* Sync cursor to new dot and scroll if needed */
+			if(curfile){
+				buf_cursor = curfile->dot.r.p2;
+				if(buf_cursor > curfile->b.nc)
+					buf_cursor = curfile->b.nc;
+			}
+			needs_redraw = 1;
+		}
+
 		if(needs_redraw){
 			draw_bufmode();
 			needs_redraw = 0;
@@ -2495,7 +3006,10 @@ bufmode:
 			continue;
 		}
 
-		handle_bufkey(key);
+		if(overlay_visible)
+			handle_overlay_key(key);
+		else
+			handle_bufkey(key);
 
 		/* If we have queued commands, return them to sam for processing */
 		if(!queue_empty())
