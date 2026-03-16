@@ -1583,10 +1583,21 @@ count_visual_rows(Posn from, Posn to)
 static void
 buf_scrollto(Posn p)
 {
-	int visual_rows;
+	int visual_rows, visible_rows;
 
 	if(!curfile)
 		return;
+
+	/* Compute visible rows: account for overlay if visible */
+	visible_rows = term_rows;
+	if(overlay_visible){
+		int oh = 1 + overlay_hist_count + 1 + 1;
+		if(oh > term_rows / 2)
+			oh = term_rows / 2;
+		if(oh < 3)
+			oh = 3;
+		visible_rows = term_rows - oh;
+	}
 
 	/* Count visual rows from origin to cursor */
 	visual_rows = count_visual_rows(buf_origin, p);
@@ -1594,11 +1605,11 @@ buf_scrollto(Posn p)
 	if(p < buf_origin){
 		/* Cursor is above the screen - scroll up */
 		buf_origin = file_linestart(curfile, p);
-	}else if(visual_rows >= term_rows){
-		/* Cursor is below the screen - center it */
+	}else if(visual_rows >= visible_rows){
+		/* Cursor is below the visible area - center it */
 		int i;
 		buf_origin = file_linestart(curfile, p);
-		for(i = 0; i < term_rows / 2 && buf_origin > 0; i++)
+		for(i = 0; i < visible_rows / 2 && buf_origin > 0; i++)
 			buf_origin = file_prevline(curfile, buf_origin);
 	}
 }
