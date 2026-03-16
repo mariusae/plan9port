@@ -1727,7 +1727,7 @@ draw_bufmode(void)
 			snprint(cmd_fg, sizeof cmd_fg, CSI "1m");
 			snprint(input_fg, sizeof input_fg, CSI "0m");
 		}else{
-			snprint(overlay_bg, sizeof overlay_bg, CSI "48;2;215;218;224m");
+			snprint(overlay_bg, sizeof overlay_bg, CSI "48;2;220;220;220m");
 			snprint(output_fg, sizeof output_fg, CSI "38;2;80;80;95m");
 			snprint(cmd_fg, sizeof cmd_fg, CSI "1;38;2;30;30;40m");
 			snprint(input_fg, sizeof input_fg, CSI "0m" CSI "38;2;30;30;40m");
