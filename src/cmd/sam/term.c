@@ -108,6 +108,21 @@ static struct {
 static int nfile_states = 0;
 static File *last_file = nil;  /* Track file switches */
 
+/* Right-click context menu state */
+static int menu_visible = 0;
+static int menu_x, menu_y;          /* top-left screen position */
+static int menu_width, menu_height;  /* dimensions */
+static int menu_hover = -1;         /* highlighted row (0-based within menu items) */
+
+#define MENU_MAX_ITEMS 64
+static struct {
+	char label[256];
+	int type;       /* 0=write, 1=file */
+	File *file;     /* for type=1 */
+} menu_items[MENU_MAX_ITEMS];
+static int menu_nitems;
+static int menu_sep_after = -1;  /* item index after which to draw separator */
+
 /* Input queue for returning characters to sam */
 static Rune inputqueue[4096];
 static int inputhead = 0;
@@ -172,6 +187,11 @@ static void save_file_state(File *f);
 static void restore_file_state(File *f);
 static int read_bracketed_paste(Rune **bufp);
 static int iswordchar(Rune ch);
+static void menu_build(void);
+static void menu_show(int click_x, int click_y);
+static void menu_dismiss(void);
+static void draw_menu(void);
+static void menu_execute(int item);
 static void handle_overlay_key(int key);
 static void overlay_submit(void);
 static void overlay_add_history(char *line);
@@ -1933,6 +1953,259 @@ move_visual_down(Posn p)
 	return screen_to_pos(cur_row + 1, cur_col);
 }
 
+/*
+ * Right-click context menu
+ */
+
+static void
+menu_build(void)
+{
+	int i;
+	File *f;
+	char *name;
+
+	menu_nitems = 0;
+	menu_sep_after = -1;
+
+	if(!curfile)
+		return;
+
+	/* Write command (only if file has a name) */
+	if(curfile->name.s[0] != 0){
+		name = Strtoc(&curfile->name);
+		snprint(menu_items[menu_nitems].label,
+			sizeof menu_items[0].label, " write                 (w) ");
+		menu_items[menu_nitems].type = 0;
+		menu_items[menu_nitems].file = nil;
+		menu_sep_after = menu_nitems;
+		menu_nitems++;
+		free(name);
+	}
+
+	/* File list */
+	for(i = 0; i < file.nused && menu_nitems < MENU_MAX_ITEMS; i++){
+		f = file.filepptr[i];
+		if(f == cmd)
+			continue;
+		name = Strtoc(&f->name);
+		snprint(menu_items[menu_nitems].label,
+			sizeof menu_items[0].label, " %c%c %s ",
+			f->mod ? '\'' : ' ',
+			f == curfile ? '.' : ' ',
+			name[0] ? name : "(unnamed)");
+		menu_items[menu_nitems].type = 1;
+		menu_items[menu_nitems].file = f;
+		menu_nitems++;
+		free(name);
+	}
+}
+
+static void
+menu_show(int click_x, int click_y)
+{
+	int i, len, title_len;
+	char *name;
+	int pct;
+
+	menu_build();
+	if(menu_nitems == 0)
+		return;
+
+	/* Compute title */
+	name = Strtoc(&curfile->name);
+	if(curfile->b.nc > 0)
+		pct = (int)((long long)buf_origin * 100 / curfile->b.nc);
+	else
+		pct = 0;
+
+	/* Compute menu width from title and items */
+	title_len = strlen(name[0] ? name : "(unnamed)") + 10;  /* " name (XX%) " */
+	menu_width = title_len + 4;  /* borders + padding */
+	for(i = 0; i < menu_nitems; i++){
+		len = strlen(menu_items[i].label) + 2;  /* borders */
+		if(len > menu_width)
+			menu_width = len;
+	}
+	if(menu_width > 40)
+		menu_width = 40;
+	if(menu_width < 16)
+		menu_width = 16;
+
+	free(name);
+
+	/* Height: top border + items + separator + bottom border */
+	menu_height = 2 + menu_nitems;  /* top/bottom borders */
+	if(menu_sep_after >= 0)
+		menu_height++;  /* separator row */
+
+	/* Center on click position */
+	menu_x = click_x - menu_width / 2;
+	menu_y = click_y - menu_height / 2;
+
+	/* Clamp to screen bounds */
+	if(menu_x < 0) menu_x = 0;
+	if(menu_y < 0) menu_y = 0;
+	if(menu_x + menu_width > term_cols)
+		menu_x = term_cols - menu_width;
+	if(menu_y + menu_height > term_rows)
+		menu_y = term_rows - menu_height;
+	if(menu_x < 0) menu_x = 0;
+	if(menu_y < 0) menu_y = 0;
+
+	menu_visible = 1;
+	menu_hover = -1;
+	needs_redraw = 1;
+}
+
+static void
+menu_dismiss(void)
+{
+	menu_visible = 0;
+	menu_hover = -1;
+	needs_redraw = 1;
+}
+
+static void
+menu_execute(int item)
+{
+	if(item < 0 || item >= menu_nitems)
+		return;
+
+	if(menu_items[item].type == 0){
+		/* Write command - same as Ctrl-S */
+		if(curfile->name.s[0] != 0){
+			Address save_addr = addr;
+			char *output;
+			addr.r.p1 = 0;
+			addr.r.p2 = curfile->b.nc;
+			addr.f = curfile;
+			getname(curfile, 0, FALSE);
+			bufmode_capture_start();
+			writef(curfile);
+			output = bufmode_capture_end();
+			addr = save_addr;
+			if(output)
+				show_output_and_wait(output);
+		}
+	}else if(menu_items[item].type == 1){
+		/* File switch - queue 'b filename' command */
+		File *f = menu_items[item].file;
+		if(f && f != curfile){
+			char *name = Strtoc(&f->name);
+			char cmd_buf[512];
+			snprint(cmd_buf, sizeof cmd_buf, "b %s\n", name);
+			free(name);
+			save_file_state(curfile);
+			queue_string(cmd_buf);
+		}
+	}
+}
+
+static void
+draw_menu(void)
+{
+	int row, i, j;
+	char menu_bg[32], menu_fg[32], highlight[64];
+	char *name;
+	int pct;
+	char title[256];
+	int title_len, pad_left, pad_right, inner;
+
+	if(!menu_visible || !curfile)
+		return;
+
+	/* Colors matching overlay scheme */
+	if(term_darkbg){
+		snprint(menu_bg, sizeof menu_bg, CSI "48;2;65;67;75m");
+		snprint(menu_fg, sizeof menu_fg, CSI "38;2;220;220;230m");
+	}else{
+		snprint(menu_bg, sizeof menu_bg, CSI "48;2;220;220;220m");
+		snprint(menu_fg, sizeof menu_fg, CSI "38;2;30;30;40m");
+	}
+	snprint(highlight, sizeof highlight, CSI "7m");  /* inverse video */
+
+	inner = menu_width - 2;  /* inside borders */
+
+	/* Build title string */
+	name = Strtoc(&curfile->name);
+	if(curfile->b.nc > 0)
+		pct = (int)((long long)buf_origin * 100 / curfile->b.nc);
+	else
+		pct = 0;
+	snprint(title, sizeof title, " %s (%d%%) ",
+		name[0] ? name : "(unnamed)", pct);
+	free(name);
+	title_len = strlen(title);
+	if(title_len > inner)
+		title_len = inner;
+
+	/* Top border with title */
+	row = menu_y;
+	term_goto(row, menu_x);
+	term_puts(menu_bg);
+	term_puts(menu_fg);
+	term_puts("\xe2\x94\x8c");  /* ┌ */
+	pad_left = (inner - title_len) / 2;
+	pad_right = inner - title_len - pad_left;
+	for(j = 0; j < pad_left; j++)
+		term_puts("\xe2\x94\x80");  /* ─ */
+	term_write(title, title_len);
+	for(j = 0; j < pad_right; j++)
+		term_puts("\xe2\x94\x80");  /* ─ */
+	term_puts("\xe2\x94\x90");  /* ┐ */
+	term_puts(CSI "0m");
+	row++;
+
+	/* Items */
+
+	for(i = 0; i < menu_nitems; i++){
+		int label_len;
+
+		term_goto(row, menu_x);
+		term_puts(menu_bg);
+		term_puts(menu_fg);
+		if(menu_hover == i)
+			term_puts(highlight);
+		term_puts("\xe2\x94\x82");  /* │ */
+
+		label_len = strlen(menu_items[i].label);
+		if(label_len > inner)
+			label_len = inner;
+		term_write(menu_items[i].label, label_len);
+		for(j = label_len; j < inner; j++)
+			term_puts(" ");
+
+		if(menu_hover == i)
+			term_puts(CSI "27m");  /* un-inverse */
+		term_puts("\xe2\x94\x82");  /* │ */
+		term_puts(CSI "0m");
+		row++;
+
+		/* Separator after specified item */
+		if(i == menu_sep_after && i < menu_nitems - 1){
+			term_goto(row, menu_x);
+			term_puts(menu_bg);
+			term_puts(menu_fg);
+			term_puts("\xe2\x94\x9c");  /* ├ */
+			for(j = 0; j < inner; j++)
+				term_puts("\xe2\x94\x80");  /* ─ */
+			term_puts("\xe2\x94\xa4");  /* ┤ */
+			term_puts(CSI "0m");
+			row++;
+		}
+	}
+
+	/* Bottom border */
+	term_goto(row, menu_x);
+	term_puts(menu_bg);
+	term_puts(menu_fg);
+	term_puts("\xe2\x94\x94");  /* └ */
+	for(j = 0; j < inner; j++)
+		term_puts("\xe2\x94\x80");  /* ─ */
+	term_puts("\xe2\x94\x98");  /* ┘ */
+	term_puts(CSI "0m");
+}
+
 static void
 draw_bufmode(void)
 {
@@ -2248,6 +2521,10 @@ draw_bufmode(void)
 		term_goto(row, col);
 	}
 
+	/* Draw context menu on top of everything */
+	if(menu_visible)
+		draw_menu();
+
 	term_flush();
 }
 
@@ -2490,7 +2767,9 @@ handle_bufkey(int key)
 
 	switch(key){
 	case KEY_ESC:
-		if(overlay_visible){
+		if(menu_visible){
+			menu_dismiss();
+		}else if(overlay_visible){
 			overlay_visible = 0;
 			needs_redraw = 1;
 		}else{
@@ -3117,7 +3396,7 @@ static void
 handle_mouse(void)
 {
 	int button = 0, x = 0, y = 0;
-	int c;
+	int c, i;
 	int pressed;
 	int btn;
 	Posn p;
@@ -3145,6 +3424,57 @@ handle_mouse(void)
 	pressed = (c == 'M');
 	x--;
 	y--;
+
+	/* If context menu is visible, route all mouse events to menu handler */
+	if(menu_visible){
+		btn = button & 3;
+
+		/* Right-click drag (motion with button held): highlight item */
+		if(button >= 32 && button < 64){
+			/* Map y to menu item */
+			int menu_row = y - menu_y - 1;  /* -1 for top border */
+			int item = -1;
+			if(x > menu_x && x < menu_x + menu_width - 1 &&
+			   menu_row >= 0){
+				/* Account for separator */
+				int r = 0;
+				for(i = 0; i < menu_nitems; i++){
+					if(r == menu_row){
+						item = i;
+						break;
+					}
+					r++;
+					if(i == menu_sep_after && i < menu_nitems - 1)
+						r++;  /* separator row */
+				}
+			}
+			if(menu_hover != item){
+				menu_hover = item;
+				needs_redraw = 1;
+			}
+			return;
+		}
+
+		/* Right-click release: execute or dismiss */
+		if(btn == 2 && !pressed){
+			if(menu_hover >= 0){
+				int sel = menu_hover;
+				menu_dismiss();
+				menu_execute(sel);
+			}else{
+				menu_dismiss();
+			}
+			return;
+		}
+
+		/* Any other button press or scroll: dismiss menu */
+		if(pressed || button == 64 || button == 65){
+			menu_dismiss();
+			return;
+		}
+
+		return;
+	}
 
 	/* If overlay is visible, handle mouse events in overlay */
 	if(overlay_visible){
@@ -3464,6 +3794,9 @@ buffer_click:
 			}
 		}
 		needs_redraw = 1;
+	}else if(btn == 2 && pressed){
+		/* Right-click press: show context menu */
+		menu_show(x, y);
 	}
 }
 
