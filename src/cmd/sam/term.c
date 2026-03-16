@@ -1744,30 +1744,57 @@ draw_bufmode(void)
 		prompt_row = term_rows - 2;  /* second-to-last row */
 
 		for(i = hist_start; i < overlay_hist_count - overlay_hist_scroll && orow < prompt_row; i++){
-			int slen;
 			term_goto(orow, 0);
 			term_puts(overlay_bg);
 			if(overlay_history[i][0] == '\x01'){
 				/* Command line: flush left, bold */
 				term_puts(cmd_fg);
 				term_puts(overlay_bg);
-				slen = strlen(overlay_history[i] + 1);
-				if(slen > term_cols)
-					slen = term_cols;
-				term_write(overlay_history[i] + 1, slen);
-				for(j = slen; j < term_cols; j++)
-					term_puts(" ");
+				{
+					char *s = overlay_history[i] + 1;
+					int vcol = 0;
+					while(*s && vcol < term_cols){
+						if(*s == '\t'){
+							int stop = ((vcol / 8) + 1) * 8;
+							if(stop > term_cols) stop = term_cols;
+							while(vcol < stop){
+								term_puts(" ");
+								vcol++;
+							}
+						}else{
+							term_write(s, 1);
+							vcol++;
+						}
+						s++;
+					}
+					for(j = vcol; j < term_cols; j++)
+						term_puts(" ");
+				}
 			}else{
 				/* Output line: full block gutter + text */
 				term_puts(output_fg);
 				term_puts(overlay_bg);
 				term_puts("\xe2\x96\x88 ");  /* U+2588 █ + space */
-				slen = strlen(overlay_history[i]);
-				if(slen > term_cols - 2)
-					slen = term_cols - 2;
-				term_write(overlay_history[i], slen);
-				for(j = slen + 2; j < term_cols; j++)
-					term_puts(" ");
+				{
+					char *s = overlay_history[i];
+					int vcol = 2;
+					while(*s && vcol < term_cols){
+						if(*s == '\t'){
+							int stop = ((vcol / 8) + 1) * 8;
+							if(stop > term_cols) stop = term_cols;
+							while(vcol < stop){
+								term_puts(" ");
+								vcol++;
+							}
+						}else{
+							term_write(s, 1);
+							vcol++;
+						}
+						s++;
+					}
+					for(j = vcol; j < term_cols; j++)
+						term_puts(" ");
+				}
 			}
 			term_puts(CSI "0m");
 			orow++;
