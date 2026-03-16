@@ -117,11 +117,12 @@ static int menu_hover = -1;         /* highlighted row (0-based within menu item
 #define MENU_MAX_ITEMS 64
 static struct {
 	char label[256];
-	int type;       /* 0=write, 1=file */
+	int type;       /* 0=write, 1=file, 2=cut, 3=snarf, 4=paste, 5=look, 6=regexp */
 	File *file;     /* for type=1 */
+	int sep_after;  /* draw separator line after this item */
 } menu_items[MENU_MAX_ITEMS];
 static int menu_nitems;
-static int menu_sep_after = -1;  /* item index after which to draw separator */
+static int menu_last_item = -1;  /* last selected item, for re-opening */
 
 /* Input queue for returning characters to sam */
 static Rune inputqueue[4096];
@@ -187,6 +188,8 @@ static void save_file_state(File *f);
 static void restore_file_state(File *f);
 static int read_bracketed_paste(Rune **bufp);
 static int iswordchar(Rune ch);
+static void copy_to_clipboard(Posn p1, Posn p2);
+static int look_forward(void);
 static void menu_build(void);
 static void menu_show(int click_x, int click_y);
 static void menu_dismiss(void);
@@ -318,6 +321,7 @@ enter_bufmode(void)
 
 	term_flush();
 	term_raw = 1;
+	detect_darkbg();
 	viewmode = ModeBuf;
 	overlay_visible = 0;
 	needs_redraw = 1;
@@ -1965,7 +1969,6 @@ menu_build(void)
 	char *name;
 
 	menu_nitems = 0;
-	menu_sep_after = -1;
 
 	if(!curfile)
 		return;
@@ -1977,10 +1980,46 @@ menu_build(void)
 			sizeof menu_items[0].label, " write                 (w) ");
 		menu_items[menu_nitems].type = 0;
 		menu_items[menu_nitems].file = nil;
-		menu_sep_after = menu_nitems;
+		menu_items[menu_nitems].sep_after = 1;
 		menu_nitems++;
 		free(name);
 	}
+
+	/* Editing commands */
+	snprint(menu_items[menu_nitems].label,
+		sizeof menu_items[0].label, " cut                   (x) ");
+	menu_items[menu_nitems].type = 2;
+	menu_items[menu_nitems].file = nil;
+	menu_items[menu_nitems].sep_after = 0;
+	menu_nitems++;
+
+	snprint(menu_items[menu_nitems].label,
+		sizeof menu_items[0].label, " snarf                 (c) ");
+	menu_items[menu_nitems].type = 3;
+	menu_items[menu_nitems].file = nil;
+	menu_items[menu_nitems].sep_after = 0;
+	menu_nitems++;
+
+	snprint(menu_items[menu_nitems].label,
+		sizeof menu_items[0].label, " paste                 (v) ");
+	menu_items[menu_nitems].type = 4;
+	menu_items[menu_nitems].file = nil;
+	menu_items[menu_nitems].sep_after = 0;
+	menu_nitems++;
+
+	snprint(menu_items[menu_nitems].label,
+		sizeof menu_items[0].label, " look                  (l) ");
+	menu_items[menu_nitems].type = 5;
+	menu_items[menu_nitems].file = nil;
+	menu_items[menu_nitems].sep_after = 0;
+	menu_nitems++;
+
+	snprint(menu_items[menu_nitems].label,
+		sizeof menu_items[0].label, " /regexp               (/) ");
+	menu_items[menu_nitems].type = 6;
+	menu_items[menu_nitems].file = nil;
+	menu_items[menu_nitems].sep_after = 1;
+	menu_nitems++;
 
 	/* File list */
 	for(i = 0; i < file.nused && menu_nitems < MENU_MAX_ITEMS; i++){
@@ -1995,6 +2034,7 @@ menu_build(void)
 			name[0] ? name : "(unnamed)");
 		menu_items[menu_nitems].type = 1;
 		menu_items[menu_nitems].file = f;
+		menu_items[menu_nitems].sep_after = 0;
 		menu_nitems++;
 		free(name);
 	}
@@ -2033,14 +2073,28 @@ menu_show(int click_x, int click_y)
 
 	free(name);
 
-	/* Height: top border + items + separator + bottom border */
+	/* Height: top border + items + separators + bottom border */
 	menu_height = 2 + menu_nitems;  /* top/bottom borders */
-	if(menu_sep_after >= 0)
-		menu_height++;  /* separator row */
+	for(i = 0; i < menu_nitems; i++)
+		if(menu_items[i].sep_after && i < menu_nitems - 1)
+			menu_height++;
 
-	/* Center on click position */
+	/* Position menu so last-selected item (or center) is under click */
 	menu_x = click_x - menu_width / 2;
-	menu_y = click_y - menu_height / 2;
+	if(menu_last_item >= 0 && menu_last_item < menu_nitems){
+		/* Compute row offset of last item within menu */
+		int item_row = 1;  /* top border */
+		for(i = 0; i < menu_last_item; i++){
+			item_row++;
+			if(menu_items[i].sep_after && i < menu_nitems - 1)
+				item_row++;  /* separator */
+		}
+		menu_y = click_y - item_row;
+		menu_hover = menu_last_item;
+	}else{
+		menu_y = click_y - menu_height / 2;
+		menu_hover = -1;
+	}
 
 	/* Clamp to screen bounds */
 	if(menu_x < 0) menu_x = 0;
@@ -2053,7 +2107,6 @@ menu_show(int click_x, int click_y)
 	if(menu_y < 0) menu_y = 0;
 
 	menu_visible = 1;
-	menu_hover = -1;
 	needs_redraw = 1;
 }
 
@@ -2071,6 +2124,8 @@ menu_execute(int item)
 	if(item < 0 || item >= menu_nitems)
 		return;
 
+	menu_last_item = item;
+
 	if(menu_items[item].type == 0){
 		/* Write command - same as Ctrl-S */
 		if(curfile->name.s[0] != 0){
@@ -2086,6 +2141,70 @@ menu_execute(int item)
 			addr = save_addr;
 			if(output)
 				show_output_and_wait(output);
+		}
+	}else if(menu_items[item].type == 2){
+		/* Cut - same as Ctrl-X */
+		if(curfile->dot.r.p1 != curfile->dot.r.p2){
+			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
+			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
+			logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
+			if(fileupdate(curfile, FALSE, FALSE))
+				seq++;
+			buf_cursor = curfile->dot.r.p1;
+			curfile->dot.r.p2 = curfile->dot.r.p1;
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
+	}else if(menu_items[item].type == 3){
+		/* Snarf - same as Alt-W */
+		if(curfile->dot.r.p1 != curfile->dot.r.p2){
+			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
+			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
+		}
+	}else if(menu_items[item].type == 4){
+		/* Paste - same as Ctrl-Y */
+		if(snarfbuf.nc > 0){
+			Posn p0, l, m;
+			Rune *buf;
+
+			if(curfile->dot.r.p1 != curfile->dot.r.p2){
+				p0 = curfile->dot.r.p1;
+				logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
+			}else{
+				p0 = buf_cursor;
+			}
+
+			buf = fbufalloc();
+			for(l = 0; l < snarfbuf.nc; l += m){
+				m = snarfbuf.nc - l;
+				if(m > RBUFSIZE)
+					m = RBUFSIZE;
+				bufread(&snarfbuf, l, buf, m);
+				loginsert(curfile, p0 + l, buf, m);
+				if(fileupdate(curfile, FALSE, FALSE))
+					seq++;
+			}
+			fbuffree(buf);
+
+			buf_cursor = p0 + snarfbuf.nc;
+			curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+			mark_mode = 0;
+			needs_redraw = 1;
+		}
+	}else if(menu_items[item].type == 5){
+		/* Look - same as Ctrl-L */
+		if(look_forward())
+			needs_redraw = 1;
+	}else if(menu_items[item].type == 6){
+		/* /regexp - search forward for last regex */
+		if(lastpat.n > 1){
+			nextmatch(curfile, &lastpat, curfile->dot.r.p2, 1);
+			curfile->dot.r = sel.p[0];
+			buf_cursor = curfile->dot.r.p1;
+			mark_mode = 0;
+			needs_redraw = 1;
 		}
 	}else if(menu_items[item].type == 1){
 		/* File switch - queue 'b filename' command */
@@ -2164,25 +2283,25 @@ draw_menu(void)
 		term_goto(row, menu_x);
 		term_puts(menu_bg);
 		term_puts(menu_fg);
-		if(menu_hover == i)
-			term_puts(highlight);
 		term_puts("\xe2\x94\x82");  /* │ */
 
+		if(menu_hover == i)
+			term_puts(highlight);
 		label_len = strlen(menu_items[i].label);
 		if(label_len > inner)
 			label_len = inner;
 		term_write(menu_items[i].label, label_len);
 		for(j = label_len; j < inner; j++)
 			term_puts(" ");
-
 		if(menu_hover == i)
 			term_puts(CSI "27m");  /* un-inverse */
+
 		term_puts("\xe2\x94\x82");  /* │ */
 		term_puts(CSI "0m");
 		row++;
 
-		/* Separator after specified item */
-		if(i == menu_sep_after && i < menu_nitems - 1){
+		/* Separator after item if flagged */
+		if(menu_items[i].sep_after && i < menu_nitems - 1){
 			term_goto(row, menu_x);
 			term_puts(menu_bg);
 			term_puts(menu_fg);
@@ -2215,6 +2334,7 @@ draw_bufmode(void)
 	int w;
 	int content_rows;
 	int overlay_height;
+	char sel_on[48], sel_off[16];
 
 	if(!curfile){
 		term_clear();
@@ -2248,6 +2368,13 @@ draw_bufmode(void)
 	term_clear();
 	term_puts(CSI "0m");  /* Reset attributes to ensure clean state */
 
+	/* Selection colors from FT palette: sky #cce6ff (light), matisse-blue #355778 (dark) */
+	if(term_darkbg)
+		snprint(sel_on, sizeof sel_on, CSI "48;2;53;87;120m");  /* matisse-blue */
+	else
+		snprint(sel_on, sizeof sel_on, CSI "48;2;252;208;177m");  /* ft-pink */
+	snprint(sel_off, sizeof sel_off, CSI "49m");
+
 	/* Draw file content with wrapping */
 	p = buf_origin;
 	row = 0;
@@ -2262,9 +2389,9 @@ draw_bufmode(void)
 
 		if(ch == '\n'){
 			if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2){
-				term_puts(CSI "7m");
+				term_puts(sel_on);
 				term_puts(" ");  /* show selected newline */
-				term_puts(CSI "0m");
+				term_puts(sel_off);
 			}
 			p++;
 			row++;
@@ -2287,7 +2414,7 @@ draw_bufmode(void)
 
 		/* Draw the character */
 		if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2)
-			term_puts(CSI "7m");
+			term_puts(sel_on);
 
 		if(ch == '\t'){
 			int spaces = 4 - (col % 4);
@@ -2305,7 +2432,7 @@ draw_bufmode(void)
 		}
 
 		if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2)
-			term_puts(CSI "0m");
+			term_puts(sel_off);
 
 		col += w;
 		p++;
@@ -2967,7 +3094,7 @@ handle_bufkey(int key)
 			needs_redraw = 1;
 		break;
 
-	case 19:  /* Ctrl-S - save (write file in background, stay in buffer mode) */
+	case 23:  /* Ctrl-W - save (write file in background, stay in buffer mode) */
 		if(curfile->name.s[0] == 0){
 			/* No filename - need to exit to command mode */
 			exit_bufmode();
@@ -2991,80 +3118,6 @@ handle_bufkey(int key)
 	case 17:  /* Ctrl-Q - quit (return to command mode, issue 'q' command) */
 		exit_bufmode();
 		queue_string("q\n");
-		break;
-
-	case 23:  /* Ctrl-W - kill region (cut selection) */
-		if(curfile->dot.r.p1 != curfile->dot.r.p2){
-			/* Snarf the selection first */
-			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
-			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
-			/* Delete it */
-			logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
-			if(fileupdate(curfile, FALSE, FALSE))
-				seq++;
-			buf_cursor = curfile->dot.r.p1;
-			curfile->dot.r.p2 = curfile->dot.r.p1;
-			needs_redraw = 1;
-		}
-		mark_mode = 0;
-		break;
-
-	case 25:  /* Ctrl-Y - paste */
-		if(snarfbuf.nc > 0){
-			Posn p0, l, m;
-			Rune *buf;
-
-			/* Delete selection first if any */
-			if(curfile->dot.r.p1 != curfile->dot.r.p2){
-				p0 = curfile->dot.r.p1;
-				logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
-				if(fileupdate(curfile, FALSE, FALSE))
-					seq++;
-			}else{
-				p0 = buf_cursor;
-			}
-
-			/* Insert snarfbuf contents */
-			buf = fbufalloc();
-			for(l = 0; l < snarfbuf.nc; l += m){
-				m = snarfbuf.nc - l;
-				if(m > RBUFSIZE)
-					m = RBUFSIZE;
-				bufread(&snarfbuf, l, buf, m);
-				loginsert(curfile, p0 + l, buf, m);
-				if(fileupdate(curfile, FALSE, FALSE))
-					seq++;
-			}
-			fbuffree(buf);
-
-			buf_cursor = p0 + snarfbuf.nc;
-			curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
-			mark_mode = 0;
-			needs_redraw = 1;
-		}
-		break;
-
-	case 24:  /* Ctrl-X - cut selection */
-		if(curfile->dot.r.p1 != curfile->dot.r.p2){
-			/* Copy to internal clipboard and system clipboard */
-			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
-			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
-			/* Delete the selection */
-			logdelete(curfile, curfile->dot.r.p1, curfile->dot.r.p2);
-			if(fileupdate(curfile, FALSE, FALSE))
-				seq++;
-			buf_cursor = curfile->dot.r.p1;
-			curfile->dot.r.p2 = curfile->dot.r.p1;
-			mark_mode = 0;
-			needs_redraw = 1;
-		}
-		break;
-
-	case KEY_ALT_W:  /* Alt+W - copy to snarf buffer and system clipboard (Emacs-style) */
-		if(curfile->dot.r.p1 != curfile->dot.r.p2){
-			snarf(curfile, curfile->dot.r.p1, curfile->dot.r.p2, &snarfbuf, 0);
-			copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
-		}
 		break;
 
 	case KEY_PASTE:  /* Bracketed paste from system clipboard */
@@ -3436,7 +3489,7 @@ handle_mouse(void)
 			int item = -1;
 			if(x > menu_x && x < menu_x + menu_width - 1 &&
 			   menu_row >= 0){
-				/* Account for separator */
+				/* Account for separators */
 				int r = 0;
 				for(i = 0; i < menu_nitems; i++){
 					if(r == menu_row){
@@ -3444,7 +3497,7 @@ handle_mouse(void)
 						break;
 					}
 					r++;
-					if(i == menu_sep_after && i < menu_nitems - 1)
+					if(menu_items[i].sep_after && i < menu_nitems - 1)
 						r++;  /* separator row */
 				}
 			}
