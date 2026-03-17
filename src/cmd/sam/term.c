@@ -2393,7 +2393,12 @@ draw_bufmode(void)
 
 	content_rows = term_rows - overlay_height;
 
-	buf_scrollto(buf_cursor);
+	{
+		static Posn last_cursor = -1;
+		if(!overlay_visible || buf_cursor != last_cursor)
+			buf_scrollto(buf_cursor);
+		last_cursor = buf_cursor;
+	}
 	term_clear();
 	term_puts(CSI "0m");  /* Reset attributes to ensure clean state */
 
@@ -3859,8 +3864,8 @@ buffer_click:
 			if(buf_origin > 0)
 				buf_origin = file_prevline(curfile, buf_origin);
 		}
-		/* Move cursor up if it's now below the view */
-		if(count_visual_rows(buf_origin, buf_cursor) >= term_rows){
+		/* Move cursor up if it's now below the view (not when overlay active) */
+		if(!overlay_visible && count_visual_rows(buf_origin, buf_cursor) >= term_rows){
 			/* Place cursor on the last visible line */
 			Posn p = buf_origin;
 			for(i = 0; i < term_rows - 1; i++){
@@ -3882,8 +3887,8 @@ buffer_click:
 				break;
 			}
 		}
-		/* Move cursor down if it's now above the view */
-		if(buf_cursor < buf_origin)
+		/* Move cursor down if it's now above the view (not when overlay active) */
+		if(!overlay_visible && buf_cursor < buf_origin)
 			buf_cursor = buf_origin;
 		needs_redraw = 1;
 	}else if(button == 8 && pressed){
