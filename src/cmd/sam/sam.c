@@ -47,7 +47,7 @@ main(int _argc, char **_argv)
 	String *t;
 	char *termargs[10], **ap;
 	char *p;
-	long lineno;
+	long lineno, colno;
 	File *f;
 
 	argc = _argc;
@@ -113,15 +113,38 @@ main(int _argc, char **_argv)
 		for(i=0; i<argc; i++){
 			if(!setjmp(mainloop)){
 				lineno = 0;
+				colno = 0;
 				p = strrchr(argv[i], ':');
 				if(p != nil && p != argv[i] && p[1] != '\0'
 				&& access(argv[i], AEXIST) != 0){
 					char *end;
-					lineno = strtol(p+1, &end, 10);
-					if(*end != '\0' || lineno < 0)
-						lineno = 0;
-					else
+					long num;
+					num = strtol(p+1, &end, 10);
+					if(*end != '\0' || num < 0)
+						num = 0;
+					if(num > 0){
 						*p = '\0';
+						/* Check for file:line:col */
+						char *p2 = strrchr(argv[i], ':');
+						if(p2 != nil && p2 != argv[i] && p2[1] != '\0'
+						&& access(argv[i], AEXIST) != 0){
+							char *end2;
+							long num2;
+							num2 = strtol(p2+1, &end2, 10);
+							if(*end2 == '\0' && num2 > 0){
+								/* file:line:col */
+								lineno = num2;
+								colno = num;
+								*p2 = '\0';
+								p = p2;
+							}else{
+								/* file:line */
+								lineno = num;
+							}
+						}else{
+							lineno = num;
+						}
+					}
 				}
 				t = tmpcstr(argv[i]);
 				Straddc(t, '\0');
@@ -130,6 +153,7 @@ main(int _argc, char **_argv)
 				fixname(&genstr);
 				f = newfile();
 				f->initlineno = lineno;
+				f->initcolno = colno;
 				logsetname(f, &genstr);
 				if(p != nil && lineno > 0)
 					*p = ':';
@@ -318,9 +342,14 @@ load(File *f)
 		a.f = f;
 		a.r.p1 = a.r.p2 = 0;
 		a = lineaddr(f->initlineno, a, 0);
+		if(f->initcolno > 0){
+			a.r.p2 = a.r.p1;
+			a = charaddr(f->initcolno - 1, a, 1);
+		}
 		f->dot.r = a.r;
 		f->ndot.r = a.r;
 		f->initlineno = 0;
+		f->initcolno = 0;
 	}
 }
 

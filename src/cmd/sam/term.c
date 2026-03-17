@@ -2416,11 +2416,19 @@ draw_bufmode(void)
 
 		ch = filereadc(curfile, p);
 
+		/* Block cursor at buf_cursor when overlay is active and no selection */
+		int at_cursor = (overlay_visible && p == buf_cursor
+			&& curfile->dot.r.p1 == curfile->dot.r.p2);
+
 		if(ch == '\n'){
 			if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2){
 				term_puts(sel_on);
 				term_puts(" ");  /* show selected newline */
 				term_puts(sel_off);
+			}else if(at_cursor){
+				term_puts(CSI "7m");
+				term_puts(" ");
+				term_puts(CSI "27m");
 			}
 			p++;
 			row++;
@@ -2444,6 +2452,8 @@ draw_bufmode(void)
 		/* Draw the character */
 		if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2)
 			term_puts(sel_on);
+		else if(at_cursor)
+			term_puts(CSI "7m");
 
 		if(ch == '\t'){
 			int spaces = 4 - (col % 4);
@@ -2462,9 +2472,20 @@ draw_bufmode(void)
 
 		if(p >= curfile->dot.r.p1 && p < curfile->dot.r.p2)
 			term_puts(sel_off);
+		else if(at_cursor)
+			term_puts(CSI "27m");
 
 		col += w;
 		p++;
+	}
+
+	/* Block cursor at end-of-file when overlay is active and no selection */
+	if(overlay_visible && buf_cursor >= curfile->b.nc
+	   && curfile->dot.r.p1 == curfile->dot.r.p2
+	   && row < content_rows){
+		term_puts(CSI "7m");
+		term_puts(" ");
+		term_puts(CSI "27m");
 	}
 
 	if(overlay_visible){

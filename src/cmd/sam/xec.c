@@ -78,32 +78,59 @@ int
 b_cmd(File *f, Cmd *cp)
 {
 	long lineno = 0;
+	long colno = 0;
 
 	USED(f);
 	if(cp->cmdc == 'B'){
-		/* Parse optional :lineno suffix */
+		/* Parse optional :lineno or :lineno:colno suffix */
 		String *s = cp->ctext;
-		int i;
-		/* Find last ':' in the text (skip leading space) */
-		int last_colon = -1;
-		for(i = 0; i < s->n && s->s[i] != '\n' && s->s[i] != '\0'; i++)
-			if(s->s[i] == ':')
-				last_colon = i;
-		if(last_colon > 0 && last_colon < i){
-			/* Check if everything after colon is digits */
-			int j, alldigits = 1;
-			for(j = last_colon+1; j < i; j++){
-				if(s->s[j] < '0' || s->s[j] > '9'){
-					alldigits = 0;
-					break;
+		int i, end;
+		/* Find end of text (before newline/nul) */
+		for(end = 0; end < s->n && s->s[end] != '\n' && s->s[end] != '\0'; end++)
+			;
+		/* Scan backwards for :digits[:digits] pattern */
+		/* Try to find second-to-last colon for file:line:col */
+		int c1 = -1, c2 = -1;  /* positions of last two colons */
+		for(i = 0; i < end; i++){
+			if(s->s[i] == ':'){
+				c1 = c2;
+				c2 = i;
+			}
+		}
+		/* Try file:line:col first */
+		if(c1 > 0 && c2 > c1){
+			int j, ok = 1;
+			long ln = 0, cn = 0;
+			for(j = c1+1; j < c2; j++){
+				if(s->s[j] < '0' || s->s[j] > '9'){ ok = 0; break; }
+				ln = ln * 10 + (s->s[j] - '0');
+			}
+			if(ok && j > c1+1){
+				for(j = c2+1; j < end; j++){
+					if(s->s[j] < '0' || s->s[j] > '9'){ ok = 0; break; }
+					cn = cn * 10 + (s->s[j] - '0');
 				}
 			}
-			if(alldigits && j > last_colon+1){
-				lineno = 0;
-				for(j = last_colon+1; j < i; j++)
-					lineno = lineno * 10 + (s->s[j] - '0');
-				/* Strip :lineno from the string */
-				Strdelete(s, (Posn)last_colon, (Posn)i);
+			if(ok && j > c2+1){
+				lineno = ln;
+				colno = cn;
+				Strdelete(s, (Posn)c1, (Posn)end);
+			}else{
+				/* Fall through to try file:line */
+				c1 = -1;
+			}
+		}
+		/* Try file:line */
+		if(c1 < 0 && c2 > 0){
+			int j, ok = 1;
+			long ln = 0;
+			for(j = c2+1; j < end; j++){
+				if(s->s[j] < '0' || s->s[j] > '9'){ ok = 0; break; }
+				ln = ln * 10 + (s->s[j] - '0');
+			}
+			if(ok && j > c2+1){
+				lineno = ln;
+				Strdelete(s, (Posn)c2, (Posn)end);
 			}
 		}
 		f = getfile(cp->ctext);
@@ -112,6 +139,8 @@ b_cmd(File *f, Cmd *cp)
 	if(f->unread){
 		if(lineno > 0)
 			f->initlineno = lineno;
+		if(colno > 0)
+			f->initcolno = colno;
 		load(f);
 	}else{
 		if(lineno > 0){
@@ -119,6 +148,10 @@ b_cmd(File *f, Cmd *cp)
 			a.f = f;
 			a.r.p1 = a.r.p2 = 0;
 			a = lineaddr(lineno, a, 0);
+			if(colno > 0){
+				a.r.p2 = a.r.p1;
+				a = charaddr(colno - 1, a, 1);
+			}
 			f->dot.r = a.r;
 			f->ndot.r = a.r;
 		}

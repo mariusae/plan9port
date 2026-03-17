@@ -191,6 +191,7 @@ struct File
 	long		prevseq;
 	int		prevmod;
 	Posn		initlineno;	/* line number from file:lineno on command line */
+	Posn		initcolno;	/* column number from file:line:col on command line */
 };
 /*File*		fileaddtext(File*, Text*); */
 void		fileclose(File*);
@@ -273,6 +274,7 @@ int	getname(File*, String*, int);
 long	getnum(int);
 void	hiccough(char*);
 void	inslist(List*, int, ...);
+Address	charaddr(Posn, Address, int);
 Address	lineaddr(Posn, Address, int);
 List	*listalloc(int);
 void	listfree(List*);
