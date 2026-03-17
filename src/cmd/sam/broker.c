@@ -41,6 +41,16 @@ resolve_arg(char *arg)
 	char resolved[4096];
 	char result[4096];
 
+	/* Expand leading ~ to $HOME */
+	if(arg[0] == '~' && (arg[1] == '/' || arg[1] == '\0' || arg[1] == ':')){
+		char *h = getenv("HOME");
+		if(h){
+			char expanded[4096];
+			snprint(expanded, sizeof expanded, "%s%s", h, arg + 1);
+			arg = strdup(expanded);
+		}
+	}
+
 	/* Find :line or :line:col suffix */
 	suffix = nil;
 	filepart = strdup(arg);
@@ -510,6 +520,17 @@ broker_main(int argc, char **argv)
 					n--;
 				cwdbuf[n] = '\0';
 				pane_cwd = strdup(cwdbuf);
+			}
+		}
+
+		/* Expand leading ~ to $HOME */
+		if(pane_token[0] == '~' && (pane_token[1] == '/' || pane_token[1] == '\0' || pane_token[1] == ':')){
+			char *h = getenv("HOME");
+			if(h){
+				char expanded[4096];
+				snprint(expanded, sizeof expanded, "%s%s", h, pane_token + 1);
+				free(pane_token);
+				pane_token = strdup(expanded);
 			}
 		}
 
