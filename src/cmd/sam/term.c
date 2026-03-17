@@ -2394,6 +2394,23 @@ menu_execute(int item)
 			while(right > left && filereadc(curfile, right - 1) == ':')
 				right--;
 
+			/* Trim file:line[:col]:garbage (e.g. "foo.rs:29:21:use" -> "foo.rs:29:21") */
+			{
+				Posn k, last_num_end = -1;
+				for(k = left; k < right; k++){
+					if(filereadc(curfile, k) == ':' && k+1 < right
+					   && filereadc(curfile, k+1) >= '0' && filereadc(curfile, k+1) <= '9'){
+						k++; /* skip colon */
+						while(k < right && filereadc(curfile, k) >= '0' && filereadc(curfile, k) <= '9')
+							k++;
+						last_num_end = k;
+						k--; /* will be incremented by for loop */
+					}
+				}
+				if(last_num_end > 0 && last_num_end < right)
+					right = last_num_end;
+			}
+
 			/* Extract token */
 			for(p = left; p < right && tlen < (int)sizeof(token) - 4; p++){
 				Rune ch = filereadc(curfile, p);
@@ -3958,6 +3975,29 @@ handle_mouse(void)
 						/* Strip trailing colons */
 						while(right > left && text[right-1] == ':')
 							right--;
+
+						/*
+						 * Trim file:line[:col]:garbage patterns.
+						 * Find the last colon-separated run of digits
+						 * and truncate anything after it that starts
+						 * with :non-digit (e.g. "foo.rs:29:21:use" -> "foo.rs:29:21").
+						 */
+						{
+							int k, last_num_end = -1;
+							for(k = left; k < right; k++){
+								if(text[k] == ':' && k+1 < right && text[k+1] >= '0' && text[k+1] <= '9'){
+									/* skip colon */
+									k++;
+									/* skip digits */
+									while(k < right && text[k] >= '0' && text[k] <= '9')
+										k++;
+									last_num_end = k;
+									k--; /* will be incremented by for loop */
+								}
+							}
+							if(last_num_end > 0 && last_num_end < right)
+								right = last_num_end;
+						}
 
 						tlen = right - left;
 						if(tlen > 0 && tlen < (int)sizeof(token)){
