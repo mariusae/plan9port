@@ -2303,6 +2303,8 @@ draw_menu(void)
 
 		if(menu_hover == i)
 			term_puts(highlight);
+		if(menu_items[i].type == 1 && menu_items[i].file == curfile)
+			term_puts(CSI "1m");  /* bold for current file */
 		label_len = strlen(menu_items[i].label);
 		{
 			int sc_len = strlen(menu_items[i].shortcut);
