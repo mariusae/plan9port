@@ -3077,18 +3077,15 @@ handle_bufkey(int key)
 		needs_redraw = 1;
 		break;
 
-	case 21:  /* Ctrl-U - kill to beginning of line */
+	case 21:  /* Ctrl-U - undo (same as Ctrl-Z) */
 		{
-			Posn linestart = file_linestart(curfile, buf_cursor);
-			if(linestart < buf_cursor){
-				/* Snarf the text first */
-				snarf(curfile, linestart, buf_cursor, &snarfbuf, 0);
-				/* Delete it */
-				logdelete(curfile, linestart, buf_cursor);
-				if(fileupdate(curfile, FALSE, FALSE))
-					seq++;
-				buf_cursor = linestart;
-				curfile->dot.r.p1 = curfile->dot.r.p2 = buf_cursor;
+			uint p0, p1;
+			if(curfile->delta.nc > 0){
+				fileundo(curfile, TRUE, 1, &p0, &p1, FALSE);
+				buf_cursor = p1;
+				curfile->dot.r.p1 = p0;
+				curfile->dot.r.p2 = p1;
+				mark_mode = 0;
 			}
 			mark_mode = 0;
 			needs_redraw = 1;
@@ -3130,6 +3127,24 @@ handle_bufkey(int key)
 			overlay_sel_end_line = -1;
 			detect_darkbg();
 		}
+		needs_redraw = 1;
+		break;
+
+	case 31:  /* Ctrl-/ - open overlay with / command */
+		if(!overlay_visible){
+			overlay_visible = 1;
+			overlay_inputlen = 0;
+			overlay_cursor = 0;
+			overlay_hist_scroll = 0;
+			overlay_recall_idx = -1;
+			overlay_selecting = 0;
+			overlay_sel_start_line = -1;
+			overlay_sel_end_line = -1;
+			detect_darkbg();
+		}
+		overlay_input[0] = '/';
+		overlay_inputlen = 1;
+		overlay_cursor = 1;
 		needs_redraw = 1;
 		break;
 
@@ -3291,7 +3306,6 @@ handle_bufkey(int key)
 		break;
 
 	case 26:  /* Ctrl-Z - undo */
-	case 31:  /* Ctrl-/ - undo */
 		{
 			uint p0, p1;
 			if(curfile->delta.nc > 0){
