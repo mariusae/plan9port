@@ -397,6 +397,13 @@ extern Rune	empty[];
 extern int	termlocked;
 extern int	outbuffered;
 extern int	aflag;
+extern int	Bflag;
+extern int	Nflag;
+extern char	*broker_sockpath;
+extern char	*broker_argv0;
+
+void	broker_main(int, char**);
+void	termsock_cleanup(void);
 
 /* term.c - terminal mode interface for -d flag */
 extern int	termmode;	/* terminal mode active (tty detected) */

@@ -129,6 +129,7 @@ void
 hup(int sig)
 {
         panicking = 1; /* ??? */
+        termsock_cleanup();
         rescue();
         exit(1);
 }

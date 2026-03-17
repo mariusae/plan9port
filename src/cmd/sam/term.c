@@ -21,13 +21,23 @@
 #include <stdio.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/un.h>
 #include <termios.h>
 #include <signal.h>
 #include <wchar.h>
 #include <locale.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #include "sam.h"
+
+/* Undo plan9port overrides so we can use BSD socket calls */
+#undef listen
+#undef accept
 
 /* Global: terminal mode available (exported to sam.h) */
 int	termmode = 0;
@@ -113,6 +123,13 @@ static struct {
 } file_states[MAX_FILE_STATES];
 static int nfile_states = 0;
 static File *last_file = nil;  /* Track file switches */
+
+/* Unix socket listener for B commands from broker */
+static int listen_fd = -1;
+static int client_fd = -1;
+static char sockpath[256];
+static char client_buf[4096];
+static int client_buflen = 0;
 
 /* Right-click context menu state */
 static int menu_visible = 0;
@@ -383,12 +400,30 @@ exit_bufmode(void)
 void
 termcleanup(void)
 {
+	termsock_cleanup();
 	if(term_raw)
 		exit_bufmode();
 	/* Restore original terminal settings */
 	if(term_inited){
 		tcsetattr(0, TCSAFLUSH, &orig_termios);
 		term_inited = 0;
+	}
+}
+
+void
+termsock_cleanup(void)
+{
+	if(client_fd >= 0){
+		close(client_fd);
+		client_fd = -1;
+	}
+	if(listen_fd >= 0){
+		close(listen_fd);
+		listen_fd = -1;
+	}
+	if(sockpath[0]){
+		unlink(sockpath);
+		sockpath[0] = '\0';
 	}
 }
 
@@ -503,6 +538,52 @@ terminit(int startbuf)
 
 	signal(SIGWINCH, sigwinch_handler);
 	atexit(termcleanup);
+
+	/* Set up unix socket listener for B commands if in tmux */
+	{
+		char *tmux = getenv("TMUX");
+		if(tmux != nil && tmux[0] != '\0'){
+			char dir[256];
+			char winid[128];
+			struct sockaddr_un addr;
+			FILE *fp;
+			int n;
+
+			snprint(dir, sizeof dir, "/tmp/sam-tmux-%s", getuser());
+			mkdir(dir, 0700);
+
+			/* Get tmux session:window */
+			fp = popen("tmux display-message -p '#S:#I'", "r");
+			if(fp != nil){
+				n = fread(winid, 1, sizeof(winid) - 1, fp);
+				pclose(fp);
+				if(n > 0){
+					while(n > 0 && (winid[n-1] == '\n' || winid[n-1] == '\r'))
+						n--;
+					winid[n] = '\0';
+
+					snprint(sockpath, sizeof sockpath,
+						"%s/%s.%d.sock", dir, winid, getpid());
+
+					listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+					if(listen_fd >= 0){
+						unlink(sockpath);  /* remove stale */
+						memset(&addr, 0, sizeof addr);
+						addr.sun_family = AF_UNIX;
+						snprint(addr.sun_path, sizeof addr.sun_path, "%s", sockpath);
+						if(bind(listen_fd, (struct sockaddr *)&addr, sizeof addr) < 0
+						|| listen(listen_fd, 5) < 0){
+							close(listen_fd);
+							listen_fd = -1;
+							sockpath[0] = '\0';
+						} else {
+							fcntl(listen_fd, F_SETFL, O_NONBLOCK);
+						}
+					}
+				}
+			}
+		}
+	}
 
 	if(startbuf)
 		enter_bufmode();
@@ -1472,6 +1553,70 @@ detect_darkbg(void)
 	}
 }
 
+/*
+ * Socket helpers for broker B command listener.
+ */
+static void
+sock_accept(void)
+{
+	int fd;
+	fd = accept(listen_fd, nil, nil);
+	if(fd < 0)
+		return;
+	if(client_fd >= 0)
+		close(client_fd);
+	client_fd = fd;
+	client_buflen = 0;
+	fcntl(client_fd, F_SETFL, O_NONBLOCK);
+}
+
+static void
+sock_read(void)
+{
+	int n;
+	char *nl;
+
+	n = read(client_fd, client_buf + client_buflen,
+		sizeof(client_buf) - client_buflen - 1);
+	if(n <= 0){
+		close(client_fd);
+		client_fd = -1;
+		client_buflen = 0;
+		return;
+	}
+	client_buflen += n;
+	client_buf[client_buflen] = '\0';
+
+	/* Process complete lines */
+	while((nl = strchr(client_buf, '\n')) != nil){
+		*nl = '\0';
+		/* Each line should be "B <path>" or "B <path>:line:col" */
+		if(client_buf[0] == '?' && client_buf[1] == '\0'){
+			/* Query: reply with current filename */
+			char *name = nil;
+			if(curfile && curfile->name.s[0])
+				name = Strtoc(&curfile->name);
+			if(name){
+				write(client_fd, name, strlen(name));
+				write(client_fd, "\n", 1);
+				free(name);
+			} else {
+				write(client_fd, "(none)\n", 7);
+			}
+		} else if(client_buf[0] == 'B' && client_buf[1] == ' '){
+			char cmd[4096];
+			snprint(cmd, sizeof cmd, "B %s\n", client_buf + 2);
+			queue_string(cmd);
+			needs_redraw = 1;
+		}
+		/* Shift remaining data */
+		client_buflen -= (nl - client_buf + 1);
+		if(client_buflen > 0)
+			memmove(client_buf, nl + 1, client_buflen);
+		client_buf[client_buflen] = '\0';
+	}
+}
+
 /* Read a key in raw mode */
 static int pending_char = -1;
 
@@ -1479,14 +1624,41 @@ static int
 term_readchar(void)
 {
 	unsigned char c;
+	fd_set fds;
+	int maxfd;
+
 	if(pending_char >= 0){
 		int ch = pending_char;
 		pending_char = -1;
 		return ch;
 	}
-	if(read(0, &c, 1) != 1)
-		return -1;
-	return c;
+	for(;;){
+		FD_ZERO(&fds);
+		FD_SET(0, &fds);
+		maxfd = 0;
+		if(listen_fd >= 0){
+			FD_SET(listen_fd, &fds);
+			if(listen_fd > maxfd) maxfd = listen_fd;
+		}
+		if(client_fd >= 0){
+			FD_SET(client_fd, &fds);
+			if(client_fd > maxfd) maxfd = client_fd;
+		}
+		if(select(maxfd + 1, &fds, nil, nil, nil) <= 0)
+			continue;
+		if(listen_fd >= 0 && FD_ISSET(listen_fd, &fds))
+			sock_accept();
+		if(client_fd >= 0 && FD_ISSET(client_fd, &fds))
+			sock_read();
+		if(FD_ISSET(0, &fds)){
+			if(read(0, &c, 1) != 1)
+				return -1;
+			return c;
+		}
+		/* Socket data queued a command; return NUL to unblock caller */
+		if(!queue_empty())
+			return 0;
+	}
 }
 
 /*
@@ -1499,6 +1671,7 @@ term_readchar_timeout(int timeout_ms)
 	fd_set fds;
 	struct timeval tv;
 	unsigned char c;
+	int maxfd, ret;
 
 	if(pending_char >= 0){
 		int ch = pending_char;
@@ -1508,10 +1681,28 @@ term_readchar_timeout(int timeout_ms)
 
 	FD_ZERO(&fds);
 	FD_SET(0, &fds);
+	maxfd = 0;
+	if(listen_fd >= 0){
+		FD_SET(listen_fd, &fds);
+		if(listen_fd > maxfd) maxfd = listen_fd;
+	}
+	if(client_fd >= 0){
+		FD_SET(client_fd, &fds);
+		if(client_fd > maxfd) maxfd = client_fd;
+	}
 	tv.tv_sec = timeout_ms / 1000;
 	tv.tv_usec = (timeout_ms % 1000) * 1000;
 
-	if(select(1, &fds, NULL, NULL, &tv) <= 0)
+	ret = select(maxfd + 1, &fds, NULL, NULL, &tv);
+	if(ret <= 0)
+		return -1;
+
+	if(listen_fd >= 0 && FD_ISSET(listen_fd, &fds))
+		sock_accept();
+	if(client_fd >= 0 && FD_ISSET(client_fd, &fds))
+		sock_read();
+
+	if(!FD_ISSET(0, &fds))
 		return -1;
 
 	if(read(0, &c, 1) != 1)
@@ -4250,16 +4441,16 @@ buffer_click:
 static Rune
 cmd_readrune(void)
 {
-	int n, nbuf;
+	int c, nbuf;
 	char buf[UTFmax];
 	Rune r;
 
 	nbuf = 0;
 	do{
-		n = read(0, buf+nbuf, 1);
-		if(n <= 0)
+		c = term_readchar();
+		if(c < 0)
 			return (Rune)-1;
-		nbuf += n;
+		buf[nbuf++] = c;
 	}while(!fullrune(buf, nbuf));
 	chartorune(&r, buf);
 	return r;
@@ -4375,6 +4566,10 @@ terminputc(void)
 				break;
 
 			default:
+				if(r == 0 && !queue_empty()){
+					/* Socket data queued; return it */
+					return dequeue_char();
+				}
 				if(r >= 32 || r == '\t'){
 					/* Printable character or tab */
 					if(linelen < (int)(sizeof(linebuf)/sizeof(linebuf[0])) - 1){

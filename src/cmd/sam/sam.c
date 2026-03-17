@@ -52,9 +52,17 @@ main(int _argc, char **_argv)
 
 	argc = _argc;
 	argv = _argv;
+	broker_argv0 = argv[0];
 	ap = termargs;
 	*ap++ = "samterm";
 	ARGBEGIN{
+	case 'B':
+		Bflag++;
+		break;
+	case 'N':
+		Bflag++;
+		Nflag++;
+		break;
 	case 'd':
 		dflag++;
 		break;
@@ -68,6 +76,10 @@ main(int _argc, char **_argv)
 		Rflag++;
 		break;
 	case 't':
+		if(Bflag){
+			broker_sockpath = EARGF(usage());
+			break;
+		}
 		samterm = EARGF(usage());
 		break;
 	case 's':
@@ -91,6 +103,11 @@ main(int _argc, char **_argv)
 		break;
 	}ARGEND
 	*ap = nil;
+
+	if(Bflag){
+		broker_main(argc, argv);
+		exits(0);
+	}
 
 	Strinit(&cmdstr);
 	Strinit0(&lastpat);
@@ -173,7 +190,7 @@ main(int _argc, char **_argv)
 void
 usage(void)
 {
-	dprint("usage: sam [-d] [-t samterm] [-s sam name] [-r machine] [file ...]\n");
+	dprint("usage: sam [-d] [-B] [-t samterm] [-s sam name] [-r machine] [file ...]\n");
 	exits("usage");
 }
 
