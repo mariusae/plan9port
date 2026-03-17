@@ -118,7 +118,7 @@ static int menu_hover = -1;         /* highlighted row (0-based within menu item
 static struct {
 	char label[256];
 	char shortcut[8];  /* right-aligned shortcut hint, e.g. "(w)" */
-	int type;       /* 0=write, 1=file, 2=cut, 3=snarf, 4=paste, 5=look, 6=regexp */
+	int type;       /* 0=write, 1=file, 2=cut, 3=snarf, 4=paste, 5=look, 6=regexp, 7=plumb */
 	File *file;     /* for type=1 */
 	int sep_after;  /* draw separator line after this item */
 } menu_items[MENU_MAX_ITEMS];
@@ -2014,6 +2014,13 @@ menu_build(void)
 	menu_items[menu_nitems].sep_after = 0;
 	menu_nitems++;
 
+	strcpy(menu_items[menu_nitems].label, " plumb");
+	strcpy(menu_items[menu_nitems].shortcut, "(b)");
+	menu_items[menu_nitems].type = 7;
+	menu_items[menu_nitems].file = nil;
+	menu_items[menu_nitems].sep_after = 0;
+	menu_nitems++;
+
 	strcpy(menu_items[menu_nitems].label, " /regexp");
 	strcpy(menu_items[menu_nitems].shortcut, "(/)");
 	menu_items[menu_nitems].type = 6;
@@ -2216,6 +2223,75 @@ menu_execute(int item)
 			curfile->dot.r = sel.p[0];
 			buf_cursor = curfile->dot.r.p1;
 			mark_mode = 0;
+			needs_redraw = 1;
+		}
+	}else if(menu_items[item].type == 7){
+		/* Plumb - extract selection or expand at cursor, issue B command */
+		char token[8192];
+		int tlen = 0;
+
+		if(curfile->dot.r.p1 != curfile->dot.r.p2){
+			/* Has selection: extract it */
+			Posn p;
+			Rune ch;
+			for(p = curfile->dot.r.p1; p < curfile->dot.r.p2 && tlen < (int)sizeof(token) - 4; p++){
+				ch = filereadc(curfile, p);
+				tlen += runetochar(token + tlen, &ch);
+			}
+			token[tlen] = '\0';
+			/* Strip leading/trailing whitespace */
+			{
+				char *sp = token;
+				char *ep = token + tlen;
+				while(*sp == ' ' || *sp == '\t' || *sp == '\n')
+					sp++;
+				while(ep > sp && (ep[-1] == ' ' || ep[-1] == '\t' || ep[-1] == '\n'))
+					ep--;
+				*ep = '\0';
+				if(*sp != '\0' && sp != token)
+					memmove(token, sp, strlen(sp) + 1);
+			}
+		}else{
+			/* No selection: expand at cursor like overlay does */
+			Posn left, right, p, linestart, lineend;
+
+			/* Find line boundaries */
+			linestart = buf_cursor;
+			while(linestart > 0 && filereadc(curfile, linestart - 1) != '\n')
+				linestart--;
+			lineend = buf_cursor;
+			while(lineend < curfile->b.nc && filereadc(curfile, lineend) != '\n')
+				lineend++;
+
+			/* Expand left: path chars (>= 0x21, excluding ") */
+			left = buf_cursor;
+			while(left > linestart && filereadc(curfile, left - 1) >= 0x21
+			      && filereadc(curfile, left - 1) != '"')
+				left--;
+
+			/* Expand right: path chars (>= 0x21, excluding ") */
+			right = buf_cursor;
+			while(right < lineend && filereadc(curfile, right) >= 0x21
+			      && filereadc(curfile, right) != '"')
+				right++;
+
+			/* Strip trailing colons */
+			while(right > left && filereadc(curfile, right - 1) == ':')
+				right--;
+
+			/* Extract token */
+			for(p = left; p < right && tlen < (int)sizeof(token) - 4; p++){
+				Rune ch = filereadc(curfile, p);
+				tlen += runetochar(token + tlen, &ch);
+			}
+			token[tlen] = '\0';
+		}
+
+		if(token[0] != '\0'){
+			char cmd[8192];
+			snprint(cmd, sizeof(cmd), "B %s\n", token);
+			bufmode_capture_start();
+			queue_string(cmd);
 			needs_redraw = 1;
 		}
 	}else if(menu_items[item].type == 1){
@@ -3733,13 +3809,15 @@ handle_mouse(void)
 						/* Expand left from click to find start of path token */
 						left = overlay_sel_start_col;
 						if(left > len) left = len;
-						while(left > 0 && (unsigned char)text[left-1] >= 0x21)
+						while(left > 0 && (unsigned char)text[left-1] >= 0x21
+						       && text[left-1] != '"')
 							left--;
 
 						/* Expand right from click to find end of path token */
 						right = overlay_sel_start_col;
 						if(right > len) right = len;
-						while(right < len && (unsigned char)text[right] >= 0x21)
+						while(right < len && (unsigned char)text[right] >= 0x21
+						       && text[right] != '"')
 							right++;
 
 						/* Strip trailing colons */
