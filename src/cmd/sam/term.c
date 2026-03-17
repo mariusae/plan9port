@@ -934,7 +934,7 @@ static void
 handle_overlay_key(int key)
 {
 	switch(key){
-	case 7:  /* Ctrl-G */
+	case 10:  /* Ctrl-J */
 	case KEY_ESC:
 		overlay_visible = 0;
 		overlay_recall_idx = -1;
@@ -942,7 +942,6 @@ handle_overlay_key(int key)
 		break;
 
 	case '\r':
-	case '\n':
 		overlay_recall_idx = -1;
 		overlay_submit();
 		break;
@@ -3117,7 +3116,7 @@ handle_bufkey(int key)
 		}
 		break;
 
-	case 7:  /* Ctrl-G - toggle command overlay */
+	case 10:  /* Ctrl-J - toggle command overlay */
 		overlay_visible = !overlay_visible;
 		if(overlay_visible){
 			overlay_inputlen = 0;
@@ -3689,7 +3688,55 @@ handle_mouse(void)
 					char selected[8192];
 					int total;
 
-					if(overlay_sel_start_line >= 0 && overlay_sel_end_line >= 0){
+					if(overlay_sel_start_line >= 0 && overlay_sel_end_line >= 0
+					   && overlay_sel_start_line == overlay_sel_end_line
+					   && abs(overlay_sel_start_col - overlay_sel_end_col) <= 1){
+						/* No-drag click: auto-detect file:line[:col] token */
+						int line = overlay_sel_start_line;
+						char *text;
+						int len, left, right;
+						char token[8192];
+						int tlen;
+
+						if(overlay_history[line][0] == '\x01')
+							text = overlay_history[line] + 1;
+						else
+							text = overlay_history[line];
+						len = strlen(text);
+
+						/* Expand left from click to find start of path token */
+						left = overlay_sel_start_col;
+						if(left > len) left = len;
+						while(left > 0 && (unsigned char)text[left-1] >= 0x21)
+							left--;
+
+						/* Expand right from click to find end of path token */
+						right = overlay_sel_start_col;
+						if(right > len) right = len;
+						while(right < len && (unsigned char)text[right] >= 0x21)
+							right++;
+
+						/* Strip trailing colons */
+						while(right > left && text[right-1] == ':')
+							right--;
+
+						tlen = right - left;
+						if(tlen > 0 && tlen < (int)sizeof(token)){
+							char cmd[8192];
+							char hist[8192];
+
+							memcpy(token, text + left, tlen);
+							token[tlen] = '\0';
+
+							snprint(cmd, sizeof(cmd), "B %s", token);
+							snprint(hist, sizeof(hist), "\x01%s", cmd);
+							overlay_add_history(hist);
+							bufmode_capture_start();
+							queue_string(cmd);
+							queue_char('\n');
+						}
+					}else if(overlay_sel_start_line >= 0 && overlay_sel_end_line >= 0){
+						/* Drag selection: extract selected text */
 						/* Normalize */
 						if(overlay_sel_start_line < overlay_sel_end_line ||
 						   (overlay_sel_start_line == overlay_sel_end_line &&
