@@ -27,6 +27,7 @@
 int Bflag;
 int Nflag;
 char *broker_sockpath;  /* -t sockpath for direct connect */
+char *broker_paneid;    /* -p pane_id for copy-mode cursor extraction */
 char *broker_argv0;     /* original argv[0] for re-exec */
 
 /*
@@ -335,6 +336,135 @@ build_sam_cmd(int argc, char **argv)
 	return cmd;
 }
 
+/*
+ * Extract the file path token under the tmux copy-mode cursor.
+ * Queries tmux for cursor position and pane content, then expands
+ * the token using the same algorithm as term.c plumb expansion.
+ * Returns a malloc'd string, or nil on failure.
+ */
+static char *
+expand_path_at_cursor(char *pane_id)
+{
+	FILE *fp;
+	char cmd[512];
+	int cursor_x, cursor_y;
+	char **lines;
+	int nlines, linesalloc;
+	char linebuf[4096];
+	char *line;
+	int len, left, right, k, last_num_end;
+	char *token;
+
+	/* Get copy-mode cursor position */
+	snprint(cmd, sizeof cmd,
+		"tmux display-message -t '%s' -p '#{copy_cursor_x} #{copy_cursor_y}'",
+		pane_id);
+	fp = popen(cmd, "r");
+	if(fp == nil)
+		return nil;
+	if(fscanf(fp, "%d %d", &cursor_x, &cursor_y) != 2){
+		pclose(fp);
+		return nil;
+	}
+	pclose(fp);
+
+	/* Capture pane content */
+	snprint(cmd, sizeof cmd,
+		"tmux capture-pane -t '%s' -p", pane_id);
+	fp = popen(cmd, "r");
+	if(fp == nil)
+		return nil;
+
+	/* Read all lines */
+	nlines = 0;
+	linesalloc = 128;
+	lines = malloc(sizeof(char *) * linesalloc);
+	while(fgets(linebuf, sizeof linebuf, fp)){
+		/* Strip trailing newline */
+		int n = strlen(linebuf);
+		while(n > 0 && (linebuf[n-1] == '\n' || linebuf[n-1] == '\r'))
+			n--;
+		linebuf[n] = '\0';
+		if(nlines >= linesalloc){
+			linesalloc *= 2;
+			lines = realloc(lines, sizeof(char *) * linesalloc);
+		}
+		lines[nlines++] = strdup(linebuf);
+	}
+	pclose(fp);
+
+	if(cursor_y < 0 || cursor_y >= nlines){
+		int i;
+		for(i = 0; i < nlines; i++)
+			free(lines[i]);
+		free(lines);
+		return nil;
+	}
+
+	line = lines[cursor_y];
+	len = strlen(line);
+
+	if(cursor_x < 0 || cursor_x >= len){
+		int i;
+		for(i = 0; i < nlines; i++)
+			free(lines[i]);
+		free(lines);
+		return nil;
+	}
+
+	/* Expand left: path chars (>= 0x21, excluding ") */
+	left = cursor_x;
+	while(left > 0 && (unsigned char)line[left-1] >= 0x21
+	      && line[left-1] != '"')
+		left--;
+
+	/* Expand right: path chars (>= 0x21, excluding ") */
+	right = cursor_x;
+	while(right < len && (unsigned char)line[right] >= 0x21
+	      && line[right] != '"')
+		right++;
+
+	/* Strip trailing colons */
+	while(right > left && line[right-1] == ':')
+		right--;
+
+	/* Trim file:line[:col]:garbage */
+	last_num_end = -1;
+	for(k = left; k < right; k++){
+		if(line[k] == ':' && k+1 < right
+		   && line[k+1] >= '0' && line[k+1] <= '9'){
+			k++; /* skip colon */
+			while(k < right && line[k] >= '0' && line[k] <= '9')
+				k++;
+			last_num_end = k;
+			k--; /* will be incremented by for loop */
+		}
+	}
+	if(last_num_end > 0 && last_num_end < right)
+		right = last_num_end;
+
+	if(right <= left){
+		int i;
+		for(i = 0; i < nlines; i++)
+			free(lines[i]);
+		free(lines);
+		return nil;
+	}
+
+	token = malloc(right - left + 1);
+	memmove(token, line + left, right - left);
+	token[right - left] = '\0';
+
+	{
+		int i;
+		for(i = 0; i < nlines; i++)
+			free(lines[i]);
+		free(lines);
+	}
+
+	return token;
+}
+
 void
 broker_main(int argc, char **argv)
 {
@@ -351,6 +481,79 @@ broker_main(int argc, char **argv)
 	char *socks[64];
 	int nsocks = 0;
 	int fd, i;
+	char *pane_token = nil;
+	char *pane_cwd = nil;
+
+	/* -p pane_id: extract path from tmux copy-mode cursor */
+	if(broker_paneid){
+		char pcmd[512];
+		char cwdbuf[2048];
+		FILE *pfp;
+		int n;
+
+		pane_token = expand_path_at_cursor(broker_paneid);
+		if(pane_token == nil){
+			fprint(2, "sam -B -p: no path at cursor\n");
+			exits("no path");
+		}
+
+		/* Get the pane's working directory */
+		snprint(pcmd, sizeof pcmd,
+			"tmux display-message -t '%s' -p '#{pane_current_path}'",
+			broker_paneid);
+		pfp = popen(pcmd, "r");
+		if(pfp != nil){
+			n = fread(cwdbuf, 1, sizeof(cwdbuf) - 1, pfp);
+			pclose(pfp);
+			if(n > 0){
+				while(n > 0 && (cwdbuf[n-1] == '\n' || cwdbuf[n-1] == '\r'))
+					n--;
+				cwdbuf[n] = '\0';
+				pane_cwd = strdup(cwdbuf);
+			}
+		}
+
+		/* Make relative paths absolute using the pane's CWD */
+		if(pane_token[0] != '/' && pane_cwd){
+			char abspath[4096];
+			/* Find where the :line:col suffix starts, if any */
+			char *filepart = strdup(pane_token);
+			char *p = filepart;
+			char *last_colon_cut = nil;
+
+			/* Strip :digits suffixes to find the file portion */
+			for(;;){
+				char *c = strrchr(p, ':');
+				if(c && c != p && c[1] >= '0' && c[1] <= '9'){
+					char *end;
+					strtol(c+1, &end, 10);
+					if(*end == '\0'){
+						last_colon_cut = c;
+						*c = '\0';
+						continue;
+					}
+				}
+				break;
+			}
+
+			if(last_colon_cut){
+				/* Reattach suffix from original */
+				int flen = strlen(filepart);
+				snprint(abspath, sizeof abspath, "%s/%s%s",
+					pane_cwd, filepart, pane_token + flen);
+			} else {
+				snprint(abspath, sizeof abspath, "%s/%s",
+					pane_cwd, pane_token);
+			}
+			free(filepart);
+			free(pane_token);
+			pane_token = strdup(abspath);
+		}
+
+		argv = &pane_token;
+		argc = 1;
+		/* fall through to normal broker logic */
+	}
 
 	tmux = getenv("TMUX");
 
@@ -395,7 +598,10 @@ broker_main(int argc, char **argv)
 	/* -N: always start a new instance in a split */
 	if(Nflag){
 		char *cmd = build_sam_cmd(argc, argv);
-		execlp("tmux", "tmux", "split-window", "-v", cmd, nil);
+		if(pane_cwd)
+			execlp("tmux", "tmux", "split-window", "-v", "-c", pane_cwd, cmd, nil);
+		else
+			execlp("tmux", "tmux", "split-window", "-v", cmd, nil);
 		fprint(2, "sam -N: exec tmux: %r\n");
 		exits("exec");
 	}
@@ -430,7 +636,10 @@ broker_main(int argc, char **argv)
 	if(nsocks == 0){
 		/* No existing sam: start one in a split */
 		char *cmd = build_sam_cmd(argc, argv);
-		execlp("tmux", "tmux", "split-window", "-v", cmd, nil);
+		if(pane_cwd)
+			execlp("tmux", "tmux", "split-window", "-v", "-c", pane_cwd, cmd, nil);
+		else
+			execlp("tmux", "tmux", "split-window", "-v", cmd, nil);
 		fprint(2, "sam -B: exec tmux: %r\n");
 		exits("exec");
 	}

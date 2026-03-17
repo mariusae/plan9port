@@ -400,6 +400,7 @@ extern int	aflag;
 extern int	Bflag;
 extern int	Nflag;
 extern char	*broker_sockpath;
+extern char	*broker_paneid;
 extern char	*broker_argv0;
 
 void	broker_main(int, char**);

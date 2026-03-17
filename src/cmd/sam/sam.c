@@ -63,6 +63,10 @@ main(int _argc, char **_argv)
 		Bflag++;
 		Nflag++;
 		break;
+	case 'p':
+		Bflag++;
+		broker_paneid = EARGF(usage());
+		break;
 	case 'd':
 		dflag++;
 		break;
@@ -190,7 +194,7 @@ main(int _argc, char **_argv)
 void
 usage(void)
 {
-	dprint("usage: sam [-d] [-B] [-t samterm] [-s sam name] [-r machine] [file ...]\n");
+	dprint("usage: sam [-d] [-B] [-N] [-p pane_id] [-t samterm] [-s sam name] [-r machine] [file ...]\n");
 	exits("usage");
 }
 
