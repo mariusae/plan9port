@@ -66,6 +66,12 @@ static struct timeval status_expire = {0, 0};
 static char capture_buf[8192];
 static int capture_len = 0;
 static int capturing = 0;
+static int overlay_cmd_running = 0;  /* 1 while a command is being executed */
+static int overlay_anim_frame = 0;   /* animation frame counter for spinner */
+static int spinner_row = -1;         /* screen row of spinner, -1 if not visible */
+static int spinner_col = -1;         /* screen col of spinner braille char */
+static char spinner_bg[32];          /* overlay bg escape for signal handler */
+static char spinner_fg[32];          /* output fg escape for signal handler */
 
 /* Command overlay window state */
 static int overlay_visible = 0;
@@ -387,6 +393,84 @@ termcleanup(void)
 }
 
 /*
+ * SIGALRM handler for spinner animation.
+ * Writes directly to stdout (write is async-signal-safe).
+ */
+static void
+spinner_alarm(int sig)
+{
+	char buf[128];
+	int n, i;
+	/* Braille spinner frames: 3 bytes UTF-8 each */
+	static char frames[] =
+		"\x8b\x99\xb9\xb8\xbc\xb4\xa6\xa7\x87\x8f";
+
+	USED(sig);
+	if(spinner_row < 0 || !overlay_cmd_running)
+		return;
+
+	overlay_anim_frame++;
+
+	/* Build escape sequence manually (async-signal-safe, no snprint) */
+	n = 0;
+	/* CSI s — save cursor */
+	buf[n++] = '\x1b'; buf[n++] = '['; buf[n++] = 's';
+	/* CSI row;colH — move to spinner position (1-based) */
+	buf[n++] = '\x1b'; buf[n++] = '[';
+	{
+		int row1 = spinner_row + 1;
+		int col1 = spinner_col + 1;
+		if(row1 >= 100) buf[n++] = '0' + row1/100;
+		if(row1 >= 10) buf[n++] = '0' + (row1/10)%10;
+		buf[n++] = '0' + row1%10;
+		buf[n++] = ';';
+		if(col1 >= 10) buf[n++] = '0' + (col1/10)%10;
+		buf[n++] = '0' + col1%10;
+		buf[n++] = 'H';
+	}
+	/* Set overlay bg + fg colors */
+	for(i = 0; spinner_bg[i] && n < (int)sizeof(buf) - 20; i++)
+		buf[n++] = spinner_bg[i];
+	for(i = 0; spinner_fg[i] && n < (int)sizeof(buf) - 20; i++)
+		buf[n++] = spinner_fg[i];
+	/* Braille char: 0xe2 0xa0 XX */
+	buf[n++] = '\xe2';
+	buf[n++] = '\xa0';
+	buf[n++] = frames[overlay_anim_frame % 10];
+	/* CSI u — restore cursor */
+	buf[n++] = '\x1b'; buf[n++] = '['; buf[n++] = 'u';
+
+	write(1, buf, n);
+}
+
+static void
+spinner_start(void)
+{
+	struct itimerval it;
+	struct sigaction sa;
+
+	memset(&sa, 0, sizeof sa);
+	sa.sa_handler = spinner_alarm;
+	sa.sa_flags = SA_RESTART;
+	sigaction(SIGALRM, &sa, nil);
+
+	it.it_value.tv_sec = 0;
+	it.it_value.tv_usec = 100000;   /* first fire after 100ms */
+	it.it_interval.tv_sec = 0;
+	it.it_interval.tv_usec = 100000; /* repeat every 100ms */
+	setitimer(ITIMER_REAL, &it, nil);
+}
+
+static void
+spinner_stop(void)
+{
+	struct itimerval it;
+	memset(&it, 0, sizeof it);
+	setitimer(ITIMER_REAL, &it, nil);
+	spinner_row = -1;
+}
+
+/*
  * Initialize terminal mode.
  * Set terminal to non-canonical mode so ESC is detected immediately.
  * If startbuf is true, start directly in buffer mode.
@@ -646,6 +730,7 @@ bufmode_capture_end(void)
 
 /*
  * Append to capture buffer (called from termwrite when capturing).
+ * Flushes complete lines to overlay history immediately for incremental display.
  * Returns 1 if capturing, 0 otherwise.
  */
 int
@@ -662,6 +747,30 @@ bufmode_capture_append(char *s)
 		capture_len += len;
 		capture_buf[capture_len] = '\0';
 	}
+
+	/* Flush complete lines to overlay history immediately */
+	if(overlay_visible){
+		char *p, *nl;
+		int flushed = 0;
+		p = capture_buf;
+		while((nl = strchr(p, '\n')) != nil){
+			*nl = '\0';
+			overlay_add_history(p);
+			flushed = 1;
+			p = nl + 1;
+		}
+		if(flushed){
+			/* Shift remaining partial line to start of buffer */
+			int remain = capture_len - (p - capture_buf);
+			if(remain > 0)
+				memmove(capture_buf, p, remain);
+			capture_len = remain;
+			capture_buf[capture_len] = '\0';
+			/* Redraw to show new output */
+			draw_bufmode();
+		}
+	}
+
 	return 1;
 }
 
@@ -850,6 +959,8 @@ overlay_submit(void)
 			return;
 		/* Re-execute the last command without adding a new history line */
 		bufmode_capture_start();
+		overlay_cmd_running = 1;
+		overlay_anim_frame = 0;
 		queue_string(overlay_history[idx] + 1);  /* skip \x01 marker */
 		queue_char('\n');
 		overlay_hist_scroll = 0;
@@ -875,6 +986,8 @@ overlay_submit(void)
 
 	/* Execute: capture output, queue command */
 	bufmode_capture_start();
+	overlay_cmd_running = 1;
+	overlay_anim_frame = 0;
 	queue_string(cmd);
 	queue_char('\n');
 
@@ -938,6 +1051,8 @@ handle_overlay_key(int key)
 	case KEY_ESC:
 		overlay_visible = 0;
 		overlay_recall_idx = -1;
+		if(overlay_cmd_running)
+			spinner_stop();
 		needs_redraw = 1;
 		break;
 
@@ -2460,7 +2575,7 @@ draw_bufmode(void)
 	/* Compute overlay height: pad + history + prompt + pad, max half screen */
 	overlay_height = 0;
 	if(overlay_visible){
-		overlay_height = 1 + overlay_hist_count + 1 + 1;  /* top pad + history + prompt + bottom pad */
+		overlay_height = 1 + overlay_hist_count + (overlay_cmd_running ? 1 : 0) + 1 + 1;  /* top pad + history + spinner? + prompt + bottom pad */
 		if(overlay_height > term_rows / 2)
 			overlay_height = term_rows / 2;
 		if(overlay_height < 3)
@@ -2716,6 +2831,26 @@ draw_bufmode(void)
 			orow++;
 		}
 		} /* end selection normalization scope */
+
+		/* Draw spinner line while command is running */
+		if(overlay_cmd_running && orow < prompt_row){
+			term_goto(orow, 0);
+			term_puts(overlay_bg);
+			term_puts(output_fg);
+			/* Spinner replaces the █ gutter character */
+			term_puts("\xe2\xa0\x8b ");  /* ⠋ initial frame + space */
+			/* Record spinner position and colors for SIGALRM-driven animation */
+			spinner_row = orow;
+			spinner_col = 0;  /* spinner is at column 0 */
+			strncpy(spinner_bg, overlay_bg, sizeof spinner_bg);
+			strncpy(spinner_fg, output_fg, sizeof spinner_fg);
+			for(j = 2; j < term_cols; j++)
+				term_puts(" ");
+			term_puts(CSI "0m");
+			orow++;
+		}else{
+			spinner_row = -1;
+		}
 
 		/* Draw prompt line with background */
 		term_goto(prompt_row, 0);
@@ -4115,8 +4250,15 @@ terminputc(void)
 	Rune r;
 
 	/* Return queued characters first (from buffer mode operations) */
-	if(!queue_empty())
+	if(!queue_empty()){
+		if(overlay_cmd_running && needs_redraw){
+			draw_bufmode();
+			needs_redraw = 0;
+			if(spinner_row >= 0)
+				spinner_start();
+		}
 		return dequeue_char();
+	}
 
 	/* If we have a completed line, return characters from it */
 	if(linedone){
@@ -4211,6 +4353,8 @@ bufmode:
 	for(;;){
 		/* Collect captured output after command execution */
 		if(capturing){
+			spinner_stop();
+			overlay_cmd_running = 0;
 			char *output = bufmode_capture_end();
 			if(output){
 				char *p, *nl;
