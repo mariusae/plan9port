@@ -404,6 +404,7 @@ extern char	*broker_paneid;
 extern char	*broker_argv0;
 
 void	broker_main(int, char**);
+void	broker_print_panepath(char*);
 void	termsock_cleanup(void);
 
 /* term.c - terminal mode interface for -d flag */

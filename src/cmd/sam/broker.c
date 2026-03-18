@@ -511,6 +511,114 @@ expand_path_at_cursor(char *pane_id)
 	return token;
 }
 
+/*
+ * Extract path from a tmux pane's copy-mode cursor/selection,
+ * resolve ~ and relative paths against the pane's CWD.
+ * Sets *cwdp to the pane's CWD (malloc'd) if non-nil.
+ * Returns malloc'd absolute path, or nil on failure.
+ */
+static char *
+resolve_pane_path(char *pane_id, char **cwdp)
+{
+	char pcmd[512];
+	char cwdbuf[2048];
+	FILE *pfp;
+	int n;
+	char *token;
+	char *pane_cwd = nil;
+
+	token = expand_path_at_cursor(pane_id);
+	if(token == nil)
+		return nil;
+
+	/* Get the pane's working directory */
+	snprint(pcmd, sizeof pcmd,
+		"tmux display-message -t '%s' -p '#{pane_current_path}'",
+		pane_id);
+	pfp = popen(pcmd, "r");
+	if(pfp != nil){
+		n = fread(cwdbuf, 1, sizeof(cwdbuf) - 1, pfp);
+		pclose(pfp);
+		if(n > 0){
+			while(n > 0 && (cwdbuf[n-1] == '\n' || cwdbuf[n-1] == '\r'))
+				n--;
+			cwdbuf[n] = '\0';
+			pane_cwd = strdup(cwdbuf);
+		}
+	}
+
+	/* Expand leading ~ to $HOME */
+	if(token[0] == '~' && (token[1] == '/' || token[1] == '\0' || token[1] == ':')){
+		char *h = getenv("HOME");
+		if(h){
+			char expanded[4096];
+			snprint(expanded, sizeof expanded, "%s%s", h, token + 1);
+			free(token);
+			token = strdup(expanded);
+		}
+	}
+
+	/* Make relative paths absolute using the pane's CWD */
+	if(token[0] != '/' && pane_cwd){
+		char abspath[4096];
+		char *filepart = strdup(token);
+		char *p = filepart;
+		char *last_colon_cut = nil;
+
+		for(;;){
+			char *c = strrchr(p, ':');
+			if(c && c != p && c[1] >= '0' && c[1] <= '9'){
+				char *end;
+				strtol(c+1, &end, 10);
+				if(*end == '\0'){
+					last_colon_cut = c;
+					*c = '\0';
+					continue;
+				}
+			}
+			break;
+		}
+
+		if(last_colon_cut){
+			int flen = strlen(filepart);
+			snprint(abspath, sizeof abspath, "%s/%s%s",
+				pane_cwd, filepart, token + flen);
+		} else {
+			snprint(abspath, sizeof abspath, "%s/%s",
+				pane_cwd, token);
+		}
+		free(filepart);
+		free(token);
+		token = strdup(abspath);
+	}
+
+	if(cwdp)
+		*cwdp = pane_cwd;
+	else
+		free(pane_cwd);
+
+	return token;
+}
+
+/*
+ * Print the resolved path from a tmux pane's copy-mode to stdout.
+ * Used by sam -p <pane_id> (without -B).
+ */
+void
+broker_print_panepath(char *pane_id)
+{
+	char *path;
+
+	path = resolve_pane_path(pane_id, nil);
+	if(path == nil){
+		fprint(2, "sam -p: no path at cursor\n");
+		exits("no path");
+	}
+	write(1, path, strlen(path));
+	write(1, "\n", 1);
+	free(path);
+}
+
 void
 broker_main(int argc, char **argv)
 {
@@ -532,81 +640,11 @@ broker_main(int argc, char **argv)
 
 	/* -p pane_id: extract path from tmux copy-mode cursor */
 	if(broker_paneid){
-		char pcmd[512];
-		char cwdbuf[2048];
-		FILE *pfp;
-		int n;
-
-		pane_token = expand_path_at_cursor(broker_paneid);
+		pane_token = resolve_pane_path(broker_paneid, &pane_cwd);
 		if(pane_token == nil){
 			fprint(2, "sam -B -p: no path at cursor\n");
 			exits("no path");
 		}
-
-		/* Get the pane's working directory */
-		snprint(pcmd, sizeof pcmd,
-			"tmux display-message -t '%s' -p '#{pane_current_path}'",
-			broker_paneid);
-		pfp = popen(pcmd, "r");
-		if(pfp != nil){
-			n = fread(cwdbuf, 1, sizeof(cwdbuf) - 1, pfp);
-			pclose(pfp);
-			if(n > 0){
-				while(n > 0 && (cwdbuf[n-1] == '\n' || cwdbuf[n-1] == '\r'))
-					n--;
-				cwdbuf[n] = '\0';
-				pane_cwd = strdup(cwdbuf);
-			}
-		}
-
-		/* Expand leading ~ to $HOME */
-		if(pane_token[0] == '~' && (pane_token[1] == '/' || pane_token[1] == '\0' || pane_token[1] == ':')){
-			char *h = getenv("HOME");
-			if(h){
-				char expanded[4096];
-				snprint(expanded, sizeof expanded, "%s%s", h, pane_token + 1);
-				free(pane_token);
-				pane_token = strdup(expanded);
-			}
-		}
-
-		/* Make relative paths absolute using the pane's CWD */
-		if(pane_token[0] != '/' && pane_cwd){
-			char abspath[4096];
-			/* Find where the :line:col suffix starts, if any */
-			char *filepart = strdup(pane_token);
-			char *p = filepart;
-			char *last_colon_cut = nil;
-
-			/* Strip :digits suffixes to find the file portion */
-			for(;;){
-				char *c = strrchr(p, ':');
-				if(c && c != p && c[1] >= '0' && c[1] <= '9'){
-					char *end;
-					strtol(c+1, &end, 10);
-					if(*end == '\0'){
-						last_colon_cut = c;
-						*c = '\0';
-						continue;
-					}
-				}
-				break;
-			}
-
-			if(last_colon_cut){
-				/* Reattach suffix from original */
-				int flen = strlen(filepart);
-				snprint(abspath, sizeof abspath, "%s/%s%s",
-					pane_cwd, filepart, pane_token + flen);
-			} else {
-				snprint(abspath, sizeof abspath, "%s/%s",
-					pane_cwd, pane_token);
-			}
-			free(filepart);
-			free(pane_token);
-			pane_token = strdup(abspath);
-		}
-
 		argv = &pane_token;
 		argc = 1;
 		/* fall through to normal broker logic */

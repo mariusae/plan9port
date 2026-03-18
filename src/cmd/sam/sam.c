@@ -64,7 +64,6 @@ main(int _argc, char **_argv)
 		Nflag++;
 		break;
 	case 'p':
-		Bflag++;
 		broker_paneid = EARGF(usage());
 		break;
 	case 'd':
@@ -107,6 +106,12 @@ main(int _argc, char **_argv)
 		break;
 	}ARGEND
 	*ap = nil;
+
+	if(broker_paneid && !Bflag){
+		/* -p without -B: print resolved path to stdout */
+		broker_print_panepath(broker_paneid);
+		exits(0);
+	}
 
 	if(Bflag){
 		broker_main(argc, argv);
