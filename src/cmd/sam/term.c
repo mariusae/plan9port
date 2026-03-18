@@ -65,6 +65,7 @@ static Posn mouse_sel_end = 0;
 static struct timeval last_click_time = {0, 0};
 static Posn last_click_pos = 0;
 static int needs_redraw = 1;
+static int mouse_scrolled = 0; /* suppress buf_scrollto after mouse scroll */
 static int mark_mode = 0;      /* Emacs-style mark active */
 static Posn mark_pos = 0;      /* Position where mark was set */
 
@@ -2828,7 +2829,9 @@ draw_bufmode(void)
 
 	{
 		static Posn last_cursor = -1;
-		if(!overlay_visible || buf_cursor != last_cursor)
+		if(mouse_scrolled)
+			mouse_scrolled = 0;
+		else if(!overlay_visible || buf_cursor != last_cursor)
 			buf_scrollto(buf_cursor);
 		last_cursor = buf_cursor;
 	}
@@ -4356,6 +4359,7 @@ buffer_click:
 			}
 			buf_cursor = p;
 		}
+		mouse_scrolled = 1;
 		needs_redraw = 1;
 	}else if(button == 65){
 		/* Scroll down (show later content) */
@@ -4370,6 +4374,7 @@ buffer_click:
 		/* Move cursor down if it's now above the view (not when overlay active) */
 		if(!overlay_visible && buf_cursor < buf_origin)
 			buf_cursor = buf_origin;
+		mouse_scrolled = 1;
 		needs_redraw = 1;
 	}else if(button == 8 && pressed){
 		/* Option/Alt + left click: look for selection */
