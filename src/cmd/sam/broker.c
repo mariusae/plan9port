@@ -347,9 +347,10 @@ build_sam_cmd(int argc, char **argv)
 }
 
 /*
- * Extract the file path token under the tmux copy-mode cursor.
- * Queries tmux for cursor position and pane content, then expands
- * the token using the same algorithm as term.c plumb expansion.
+ * Extract the file path from a tmux pane in copy mode.
+ * If there is an active selection, use it verbatim.
+ * Otherwise, expand the token at the cursor using the same algorithm
+ * as term.c plumb expansion.
  * Returns a malloc'd string, or nil on failure.
  */
 static char *
@@ -358,6 +359,7 @@ expand_path_at_cursor(char *pane_id)
 	FILE *fp;
 	char cmd[512];
 	int cursor_x, cursor_y;
+	int sel_active;
 	char **lines;
 	int nlines, linesalloc;
 	char linebuf[4096];
@@ -365,18 +367,52 @@ expand_path_at_cursor(char *pane_id)
 	int len, left, right, k, last_num_end;
 	char *token;
 
-	/* Get copy-mode cursor position */
+	/* Check for active selection and get cursor position */
 	snprint(cmd, sizeof cmd,
-		"tmux display-message -t '%s' -p '#{copy_cursor_x} #{copy_cursor_y}'",
+		"tmux display-message -t '%s' -p '#{selection_active} #{copy_cursor_x} #{copy_cursor_y}'",
 		pane_id);
 	fp = popen(cmd, "r");
 	if(fp == nil)
 		return nil;
-	if(fscanf(fp, "%d %d", &cursor_x, &cursor_y) != 2){
+	if(fscanf(fp, "%d %d %d", &sel_active, &cursor_x, &cursor_y) != 3){
 		pclose(fp);
 		return nil;
 	}
 	pclose(fp);
+
+	/* If there is an active selection, grab it via save-buffer */
+	if(sel_active){
+		char buf[4096];
+		int n;
+
+		/* copy-selection into buffer without cancelling copy mode, then read it */
+		snprint(cmd, sizeof cmd,
+			"tmux send-keys -t '%s' -X copy-selection", pane_id);
+		system(cmd);
+
+		snprint(cmd, sizeof cmd, "tmux save-buffer -");
+		fp = popen(cmd, "r");
+		if(fp == nil)
+			return nil;
+		n = fread(buf, 1, sizeof(buf) - 1, fp);
+		pclose(fp);
+		if(n <= 0)
+			return nil;
+		/* strip trailing whitespace */
+		while(n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r'
+		       || buf[n-1] == ' ' || buf[n-1] == '\t'))
+			n--;
+		buf[n] = '\0';
+		/* strip leading whitespace */
+		{
+			char *s = buf;
+			while(*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r')
+				s++;
+			return strdup(s);
+		}
+	}
+
+	/* No selection: expand token at cursor position */
 
 	/* Capture pane content */
 	snprint(cmd, sizeof cmd,
@@ -422,16 +458,16 @@ expand_path_at_cursor(char *pane_id)
 		return nil;
 	}
 
-	/* Expand left: path chars (>= 0x21, excluding ") */
+	/* Expand left: path chars (>= 0x21, excluding " `) */
 	left = cursor_x;
 	while(left > 0 && (unsigned char)line[left-1] >= 0x21
-	      && line[left-1] != '"')
+	      && line[left-1] != '"' && line[left-1] != '`')
 		left--;
 
-	/* Expand right: path chars (>= 0x21, excluding ") */
+	/* Expand right: path chars (>= 0x21, excluding " `) */
 	right = cursor_x;
 	while(right < len && (unsigned char)line[right] >= 0x21
-	      && line[right] != '"')
+	      && line[right] != '"' && line[right] != '`')
 		right++;
 
 	/* Strip trailing colons */

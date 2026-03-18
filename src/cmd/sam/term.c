@@ -2572,13 +2572,15 @@ menu_execute(int item)
 			/* Expand left: path chars (>= 0x21, excluding ") */
 			left = buf_cursor;
 			while(left > linestart && filereadc(curfile, left - 1) >= 0x21
-			      && filereadc(curfile, left - 1) != '"')
+			      && filereadc(curfile, left - 1) != '"'
+			      && filereadc(curfile, left - 1) != '`')
 				left--;
 
-			/* Expand right: path chars (>= 0x21, excluding ") */
+			/* Expand right: path chars (>= 0x21, excluding " `) */
 			right = buf_cursor;
 			while(right < lineend && filereadc(curfile, right) >= 0x21
-			      && filereadc(curfile, right) != '"')
+			      && filereadc(curfile, right) != '"'
+			      && filereadc(curfile, right) != '`')
 				right++;
 
 			/* Strip trailing colons */
@@ -4153,14 +4155,16 @@ handle_mouse(void)
 						left = overlay_sel_start_col;
 						if(left > len) left = len;
 						while(left > 0 && (unsigned char)text[left-1] >= 0x21
-						       && text[left-1] != '"')
+						       && text[left-1] != '"'
+						       && text[left-1] != '`')
 							left--;
 
 						/* Expand right from click to find end of path token */
 						right = overlay_sel_start_col;
 						if(right > len) right = len;
 						while(right < len && (unsigned char)text[right] >= 0x21
-						       && text[right] != '"')
+						       && text[right] != '"'
+						       && text[right] != '`')
 							right++;
 
 						/* Strip trailing colons */
