@@ -4462,6 +4462,8 @@ buffer_click:
 					curfile->dot.r.p2 = mouse_sel_start;
 				}
 				buf_cursor = p;
+				if(curfile->dot.r.p1 != curfile->dot.r.p2)
+					copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
 			}
 		}
 		needs_redraw = 1;
