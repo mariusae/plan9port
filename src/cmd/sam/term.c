@@ -2767,7 +2767,7 @@ draw_menu(void)
 static void
 update_term_title(void)
 {
-	char *name, *base;
+	char *name;
 
 	if(!curfile)
 		return;
@@ -2777,17 +2777,10 @@ update_term_title(void)
 	else
 		name = strdup("(unnamed)");
 
-	/* Use basename for the title */
-	base = strrchr(name, '/');
-	if(base)
-		base++;
-	else
-		base = name;
-
-	term_puts("\033]2;sam: ");
-	term_puts(base);
+	term_puts("\033]2;");
+	term_puts(name);
 	if(curfile->mod)
-		term_puts("*");
+		term_puts("'");
 	term_puts("\033\\");
 
 	free(name);
