@@ -227,6 +227,8 @@ static void detect_darkbg(void);
 static void overlay_copy_selection(void);
 static void overlay_screen_to_pos(int sy, int sx, int *hist_line, int *hist_col);
 
+static void update_term_title(void);
+
 /* Dark/light mode detection via OSC 11 */
 static int term_darkbg = 1;  /* assume dark background by default */
 
@@ -359,6 +361,7 @@ enter_bufmode(void)
 		/* Restore state for current file (or initialize from dot if new) */
 		restore_file_state(curfile);
 		last_file = curfile;
+		update_term_title();
 	}
 }
 
@@ -385,6 +388,9 @@ exit_bufmode(void)
 
 	/* Disable bracketed paste mode */
 	term_puts(CSI "?2004l");
+
+	/* Reset terminal title */
+	term_puts("\033]2;\033\\");
 
 	/* Switch back to main screen (restores previous content) */
 	term_puts(CSI "?1049l");
@@ -2755,6 +2761,38 @@ draw_menu(void)
 	term_puts(CSI "0m");
 }
 
+/*
+ * Set the terminal title (OSC 2) to the current filename.
+ */
+static void
+update_term_title(void)
+{
+	char *name, *base;
+
+	if(!curfile)
+		return;
+
+	if(curfile->name.s[0] != 0)
+		name = Strtoc(&curfile->name);
+	else
+		name = strdup("(unnamed)");
+
+	/* Use basename for the title */
+	base = strrchr(name, '/');
+	if(base)
+		base++;
+	else
+		base = name;
+
+	term_puts("\033]2;sam: ");
+	term_puts(base);
+	if(curfile->mod)
+		term_puts("*");
+	term_puts("\033\\");
+
+	free(name);
+}
+
 static void
 draw_bufmode(void)
 {
@@ -2781,6 +2819,7 @@ draw_bufmode(void)
 		restore_file_state(curfile);
 		last_file = curfile;
 	}
+	update_term_title();
 
 	/* Compute overlay height: pad + history + prompt + pad, max half screen */
 	overlay_height = 0;
