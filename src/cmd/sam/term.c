@@ -2630,8 +2630,19 @@ menu_execute(int item)
 		/* File switch - queue 'b filename' command */
 		File *f = menu_items[item].file;
 		if(f && f != curfile){
-			char *name = Strtoc(&f->name);
+			int j;
+			char *name;
 			char cmd_buf[512];
+
+			/* Remember the file we're leaving so the menu reopens there */
+			for(j = 0; j < menu_nitems; j++){
+				if(menu_items[j].type == 1 && menu_items[j].file == curfile){
+					menu_last_item = j;
+					break;
+				}
+			}
+
+			name = Strtoc(&f->name);
 			snprint(cmd_buf, sizeof cmd_buf, "b %s\n", name);
 			free(name);
 			save_file_state(curfile);
