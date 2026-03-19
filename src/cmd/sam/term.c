@@ -66,6 +66,7 @@ static struct timeval last_click_time = {0, 0};
 static Posn last_click_pos = 0;
 static int needs_redraw = 1;
 static int mouse_scrolled = 0; /* suppress buf_scrollto after mouse scroll */
+static int snarf_flash = 0;    /* flash selection after snarf-to-clipboard */
 static int mark_mode = 0;      /* Emacs-style mark active */
 static Posn mark_pos = 0;      /* Position where mark was set */
 
@@ -214,6 +215,7 @@ static void restore_file_state(File *f);
 static int read_bracketed_paste(Rune **bufp);
 static int iswordchar(Rune ch);
 static void copy_to_clipboard(Posn p1, Posn p2);
+static void snarf_flash_selection(void);
 static int look_forward(void);
 static void menu_build(void);
 static void menu_show(int click_x, int click_y);
@@ -2850,7 +2852,10 @@ draw_bufmode(void)
 	term_puts(CSI "0m");  /* Reset attributes to ensure clean state */
 
 	/* Selection colors from FT palette: sky #cce6ff (light), matisse-blue #355778 (dark) */
-	if(term_darkbg)
+	if(snarf_flash){
+		/* Flash: suppress highlight so selection blinks off */
+		snprint(sel_on, sizeof sel_on, "%s", "");
+	}else if(term_darkbg)
 		snprint(sel_on, sizeof sel_on, CSI "48;2;53;87;120m");  /* matisse-blue */
 	else
 		snprint(sel_on, sizeof sel_on, CSI "48;2;252;208;177m");  /* ft-pink */
@@ -3252,6 +3257,22 @@ copy_to_clipboard(Posn p1, Posn p2)
 
 	free(text);
 	free(b64text);
+}
+
+/*
+ * Flash the selection briefly to indicate snarf-to-clipboard.
+ * Draws with inverted colors, waits, then redraws normally.
+ */
+static void
+snarf_flash_selection(void)
+{
+	if(!curfile || curfile->dot.r.p1 == curfile->dot.r.p2)
+		return;
+	snarf_flash = 1;
+	draw_bufmode();
+	usleep(80000);  /* 80ms */
+	snarf_flash = 0;
+	draw_bufmode();
 }
 
 /*
@@ -4447,6 +4468,7 @@ buffer_click:
 					mouse_selecting = 0;
 					/* Sync selection to system clipboard */
 					copy_to_clipboard(ws, we);
+					snarf_flash_selection();
 				}else{
 					/* Not on a word, just place cursor */
 					mouse_selecting = 1;
@@ -4478,8 +4500,10 @@ buffer_click:
 					curfile->dot.r.p2 = mouse_sel_start;
 				}
 				buf_cursor = p;
-				if(curfile->dot.r.p1 != curfile->dot.r.p2)
+				if(curfile->dot.r.p1 != curfile->dot.r.p2){
 					copy_to_clipboard(curfile->dot.r.p1, curfile->dot.r.p2);
+					snarf_flash_selection();
+				}
 			}
 		}
 		needs_redraw = 1;
