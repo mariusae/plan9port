@@ -592,56 +592,56 @@ enum	/* editing */
 	Collecting
 };
 
-uint		globalincref;
-uint		seq;
-uint		maxtab;	/* size of a tab, in units of the '0' character */
+extern uint		globalincref;
+extern uint		seq;
+extern uint		maxtab;	/* size of a tab, in units of the '0' character */
 
-Display		*display;
-Image		*screen;
-Font			*font;
-Mouse		*mouse;
-Mousectl		*mousectl;
-Keyboardctl	*keyboardctl;
-Reffont		reffont;
-Image		*modbutton;
-Image		*extmodbutton;
-Image		*colbutton;
-Image		*button;
-Image		*but2col;
-Image		*but3col;
-Cursor		boxcursor;
-Cursor2		boxcursor2;
-Row			row;
-int			timerpid;
-Disk			*disk;
-Text			*seltext;
-Text			*argtext;
-Text			*mousetext;	/* global because Text.close needs to clear it */
-Text			*typetext;		/* global because Text.close needs to clear it */
-Text			*barttext;		/* shared between mousetask and keyboardthread */
-int			bartflag;
-int			swapscrollbuttons;
-Window		*activewin;
-Column		*activecol;
-Buffer		snarfbuf;
-Rectangle		nullrect;
-int			fsyspid;
-char			*cputype;
-char			*objtype;
-char			*home;
-char			*acmeshell;
-char			*fontnames[2];
-Image		*tagcols[NCOL];
-Image		*textcols[NCOL];
+extern Display		*display;
+extern Image		*screen;
+extern Font			*font;
+extern Mouse		*mouse;
+extern Mousectl		*mousectl;
+extern Keyboardctl	*keyboardctl;
+extern Reffont		reffont;
+extern Image		*modbutton;
+extern Image		*extmodbutton;
+extern Image		*colbutton;
+extern Image		*button;
+extern Image		*but2col;
+extern Image		*but3col;
+extern Cursor		boxcursor;
+extern Cursor2		boxcursor2;
+extern Row			row;
+extern int			timerpid;
+extern Disk			*disk;
+extern Text			*seltext;
+extern Text			*argtext;
+extern Text			*mousetext;	/* global because Text.close needs to clear it */
+extern Text			*typetext;		/* global because Text.close needs to clear it */
+extern Text			*barttext;		/* shared between mousetask and keyboardthread */
+extern int			bartflag;
+extern int			swapscrollbuttons;
+extern Window		*activewin;
+extern Column		*activecol;
+extern Buffer		snarfbuf;
+extern Rectangle		nullrect;
+extern int			fsyspid;
+extern char			*cputype;
+extern char			*objtype;
+extern char			*home;
+extern char			*acmeshell;
+extern char			*fontnames[2];
+extern Image		*tagcols[NCOL];
+extern Image		*textcols[NCOL];
 extern char		wdir[]; /* must use extern because no dimension given */
-int			editing;
-int			erroutfd;
-int			messagesize;		/* negotiated in 9P version setup */
-int			globalautoindent;
-int			dodollarsigns;
-char*		mtpt;
-char*		racmename;
-Remote*		remotes;
+extern int			editing;
+extern int			erroutfd;
+extern int			messagesize;		/* negotiated in 9P version setup */
+extern int			globalautoindent;
+extern int			dodollarsigns;
+extern char*		mtpt;
+extern char*		racmename;
+extern Remote*		remotes;
 
 enum
 {
@@ -649,22 +649,22 @@ enum
 	Kscrollonedown	= KF|0x21
 };
 
-Channel	*cplumb;		/* chan(Plumbmsg*) */
-Channel	*cvwait;		/* chan(Vwaitmsg) */
-Channel	*ccommand;	/* chan(Command*) */
-Channel	*ckill;		/* chan(Rune*) */
-Channel	*cxfidalloc;	/* chan(Xfid*) */
-Channel	*cxfidfree;	/* chan(Xfid*) */
-Channel	*cnewwindow;	/* chan(Channel*) */
-Channel	*mouseexit0;	/* chan(int) */
-Channel	*mouseexit1;	/* chan(int) */
-Channel	*cexit;		/* chan(int) */
-Channel	*cerr;		/* chan(char*) */
-Channel	*cedit;		/* chan(int) */
-Channel	*cwarn;		/* chan(void*)[1] (really chan(unit)[1]) */
-Channel	*cwatch;	/* chan(char*) - file change notifications */
+extern Channel	*cplumb;		/* chan(Plumbmsg*) */
+extern Channel	*cvwait;		/* chan(Vwaitmsg*) */
+extern Channel	*ccommand;	/* chan(Command*) */
+extern Channel	*ckill;		/* chan(Rune*) */
+extern Channel	*cxfidalloc;	/* chan(Xfid*) */
+extern Channel	*cxfidfree;	/* chan(Xfid*) */
+extern Channel	*cnewwindow;	/* chan(Channel*) */
+extern Channel	*mouseexit0;	/* chan(int) */
+extern Channel	*mouseexit1;	/* chan(int) */
+extern Channel	*cexit;		/* chan(int) */
+extern Channel	*cerr;		/* chan(char*) */
+extern Channel	*cedit;		/* chan(int) */
+extern Channel	*cwarn;		/* chan(void*)[1] (really chan(unit)[1]) */
+extern Channel	*cwatch;	/* chan(char*) - file change notifications */
 
-QLock	editoutlk;
+extern QLock	editoutlk;
 
 #ifndef Extern
 #define Extern extern

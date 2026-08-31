@@ -690,6 +690,7 @@ threadrwakeup(Rendez *r, int all, ulong pc)
 
 static int threadargc;
 static char **threadargv;
+#pragma weak mainstacksize
 int mainstacksize;
 extern int _p9usepwlibrary;	/* getgrgid etc. smash the stack - tell _p9dir just say no */
 static void
@@ -907,7 +908,7 @@ threadinfo(void *v, char *s)
 		return 0;
 
 	for(p=_threadprocs; p; p=p->next){
-		fprint(2, "proc %p %s%s\n", (void*)p->osprocid, p->msg,
+		fprint(2, "proc %p %s%s\n", (void*)(uintptr)p->osprocid, p->msg,
 			p->sysproc ? " (sysproc)": "");
 		for(t=p->allthreads.head; t; t=t->allnext){
 			fprint(2, "\tthread %d %s: %s %s\n",

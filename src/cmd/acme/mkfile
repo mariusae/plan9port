@@ -31,6 +31,7 @@ OFILES=\
 	$SYSNAME.$O\
 	wind.$O\
 	xfid.$O\
+	dat.$O\
 
 HFILES=dat.h\
 	edit.h\

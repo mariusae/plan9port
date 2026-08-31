@@ -143,8 +143,8 @@
 .ne 1.1v
 .nr )R 0
 .fi
-'''ss12
-'''if\\$2SYNOPSIS .ss 18
+.\"ss12
+.\"if\\$2SYNOPSIS .ss 18
 .it 1 }N
 .if !\\$3 .SM
 .ft 3
@@ -209,11 +209,11 @@
 .HY
 .}f
 ..
-.\" MR - manual reference, as in .MR cat (1) ,
+.\" MR - manual reference, as in .MR cat 1 ,
 .\" $3 is the punctuation after the reference ends, if any.
 .de MR
 .nh
-.}S 2 1 \& "\Xhtml manref start \\$1 \\$2\\$1" "\\$2\Xhtml manref end \\$1 \\$2\\$3"
+.}S 2 1 \& "\Xhtml manref start \\$1 (\\$2)\\$1" "(\\$2)\Xhtml manref end \\$1 (\\$2)\\$3"
 .HY
 .}f
 ..
@@ -478,8 +478,12 @@
 .nr )V 11 \}
 .if t \{.ds R ®
 .ds S \s\n()S
+.ds lq “
+.ds rq ”
 ..\}
-.if n \{.nr )L 11i
+.if n \{.ie \nL<=0 .nr )L 11i
+.el \{.nr )L \nLu
+.nr V 0\}
 .nr LL 6.5i
 .nr )O .463i
 .if '\*(.T'think' \{.nrLL 80n
@@ -489,6 +493,12 @@
 .nr )O 0\}
 .ds R (Reg.)
 .ds S
+.ds lq ``
+.ds rq ''
+.\" Insert definitions for non-utf troff-mode devices here.
+.if '\*(.T'utf' \{.ds lq “
+.ds rq ”
+.\}
 ..\}
 .if \nT .nr LL 80n
 .if \nV>1 \{

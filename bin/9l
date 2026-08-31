@@ -31,6 +31,7 @@ case "$tag" in
 	;;
 *Darwin*)
 	ld="${CC9:-gcc} -m64 $CC9FLAGS"
+	extralibs="-lresolv"
 	;;
 *SunOS*)
 	ld="${CC9:-cc} -g $CC9FLAGS"
@@ -146,7 +147,7 @@ then
 					grep '__p9l_autolib_[a-zA-Z0-9+-]*' |
 					sed 's/.*__p9l_autolib_//; s/:.*//' |
 					sort -u |
-					egrep -v '^(thread|draw)$'
+					$egrep -v '^(thread|draw)$'
 				`
 				a="$a $b"
 			done
@@ -337,7 +338,7 @@ quiet()
 	ignore=$ignore'|ld: warning: ignoring duplicate libraries:'
 
 	sed 's/.*: In function `[^:]*: *//' "$1" |
-	egrep -v "$ignore"
+	$egrep -v "$ignore"
 }
 
 # Must use temp file to avoid pipe; pipe loses status.

@@ -8,6 +8,7 @@ usegcc()
 		-O2 \
 		-c \
 		-Wall \
+		-Wno-array-parameter \
 		-Wno-parentheses \
 		-Wno-missing-braces \
 		-Wno-switch \
@@ -18,12 +19,12 @@ usegcc()
 		-Wno-stringop-truncation \
 		-Wno-stringop-overflow \
 		-Wno-format-truncation \
-		-Wno-deprecated-pragma \
 		-Wno-unused-but-set-variable \
 		-Wno-deprecated-declarations \
 		-fno-omit-frame-pointer \
 		-fsigned-char \
-		-fcommon \
+		-fno-common \
+		-std=gnu11 \
 	"
 	# want to put -fno-optimize-sibling-calls here but
 	# that option only works with gcc3+ it seems
@@ -56,7 +57,7 @@ quiet()
 	ignore=$ignore'|expanded from macro'
 
 	grep -v '__p9l_autolib_' "$1" |
-	egrep -v "$ignore" |
+	$egrep -v "$ignore" |
 	sed 's/ .first use in this function.$//; s/\"\([^\"][^\"]*\)\", line \([0-9][0-9]*\)/\1:\2/g' |
 	$(which uniq) 1>&2  # avoid built-in uniq on SunOS
 }
@@ -84,7 +85,7 @@ useclang()
 		-Wno-unused-but-set-variable \
 		-fsigned-char \
 		-fno-caret-diagnostics \
-		-fcommon \
+		-fno-common \
 	"
 	cflags="$cflags -g"
 	cflags="$cflags $CC9FLAGS"
@@ -137,7 +138,7 @@ case "$tag" in
 		u=`uname`
 		v=`uname -r`
 		s=`echo $u$v | tr '. ' '__'`
-		cflags="$cflags -g"
+		cflags="$cflags -g -Wformat=0"
 		cflags="$cflags -D__sun__ -D__${s}__"
 		;;
 *AIX*)		usexlc

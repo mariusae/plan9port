@@ -81,7 +81,9 @@ printfile(int f)
 		if(*cmd == '!'){
 			if(fork() == 0){
 				dup(Bfildes(cons), 0);
-				execl("/bin/rc", "rc", "-c", cmd+1, 0);
+				execlp("rc", "rc", "-c", cmd+1, nil);
+				fprint(2, "p: can't exec rc\n");
+				exits("exec failed");
 			}
 			waitpid();
 			goto getcmd;

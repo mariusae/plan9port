@@ -12,6 +12,7 @@
 #include <thread.h>
 #include "x11-memdraw.h"
 #include "devdraw.h"
+#include "bigarrow.h"
 
 #undef time
 
@@ -39,6 +40,7 @@ static int _xtoplan9mouse(Xwin *w, XEvent *e, Mouse *m);
 static void _xmovewindow(Xwin *w, Rectangle r);
 static int _xtoplan9kbd(XEvent *e);
 static int _xselect(XEvent *e);
+static void _xsetcursor(Xwin *w, Cursor *c);
 
 static void	rpc_resizeimg(Client*);
 static void	rpc_resizewindow(Client*, Rectangle);
@@ -370,7 +372,11 @@ runxevent(XEvent *xev)
 		w = findxwin(((XKeyEvent*)xev)->window);
 		break;
 	case FocusOut:
+	case FocusIn:
 		w = findxwin(((XFocusChangeEvent*)xev)->window);
+		break;
+	case MapNotify:
+		w = findxwin(((XMapEvent*)xev)->window);
 		break;
 	}
 	if(w == nil)
@@ -378,9 +384,23 @@ runxevent(XEvent *xev)
 
 	int shift;
 	switch(xev->type){
-	case Expose:
-		_xexpose(w, xev);
-		break;
+	case MapNotify:
+	case FocusIn:    
+	case Expose:     /* Handle standard Expose here too for consistency */
+			/*
+			 * Force a copy from backing store (screenpm) to the window.
+			 */
+			if(w->screenpm){
+				XCopyArea(_x.display, w->screenpm, w->drawable, _x.gccopy,
+					0, 0, Dx(w->screenr), Dy(w->screenr), 0, 0);
+			}
+			/*
+			 * If this was a real Expose event, we still let standard handling
+			 * run just in case, though the CopyArea above likely did the job.
+			 */
+			if(xev->type == Expose)
+				_xexpose(w, xev);
+			break;
 
 	case DestroyNotify:
 		if(_xdestroy(w, xev))
@@ -399,9 +419,20 @@ runxevent(XEvent *xev)
 				be->button = 2;
 			else if(_x.kstate & Mod1Mask)
 				be->button = 3;
+			_x.button1map = be->button;
 		}
 		// fall through
 	case ButtonRelease:
+		/*
+		 * X reports the physical button on release, but ButtonPress
+		 * may have remapped button 1 to 2 or 3 (via Ctrl or Alt).
+		 * Use the same mapping so we clear the correct bit.
+		 */
+		if(xev->type == ButtonRelease) {
+			be = (XButtonEvent*)xev;
+			if(be->button == 1 && _x.button1map != 0)
+				be->button = _x.button1map;
+		}
 		_x.altdown = 0;
 		// fall through
 	case MotionNotify:
@@ -502,6 +533,7 @@ runxevent(XEvent *xev)
 		 * so clear out the keyboard state when we lose the focus.
 		 */
 		_x.kstate = 0;
+		_x.kbuttons = 0;
 		_x.altdown = 0;
 		gfx_abortcompose(w->client);
 		break;
@@ -623,6 +655,7 @@ xattach(Client *client, char *label, char *winsize)
 		CWBackPixel|CWBorderPixel|CWColormap,
 		&attr		/* attributes (the above aren't?!) */
 	);
+	XSelectInput(_x.display, w->drawable, StructureNotifyMask | PropertyChangeMask);
 
 	/*
 	 * Label and other properties required by ICCCCM.
@@ -762,6 +795,8 @@ xattach(Client *client, char *label, char *winsize)
 		_x.gcreplsrc0	= xgc(pmid, FillTiled, -1);
 		XFreePixmap(_x.display, pmid);
 	}
+
+	_xsetcursor(w, nil);
 
 	return w->screenimage;
 }
@@ -1275,10 +1310,18 @@ _xtoplan9kbd(XEvent *e)
 	return k+0;
 }
 
+int
+_xtoplan9buttons(unsigned int b)
+{
+	if(b == 0){
+		return 0;
+	}
+	return 1<<(b-1);
+}
+
 static int
 _xtoplan9mouse(Xwin *w, XEvent *e, Mouse *m)
 {
-	int s;
 	XButtonEvent *be;
 	XMotionEvent *me;
 
@@ -1307,54 +1350,18 @@ _xtoplan9mouse(Xwin *w, XEvent *e, Mouse *m)
 		/* BUG? on mac need to inherit these from elsewhere? */
 		m->xy.x = be->x;
 		m->xy.y = be->y;
-		s = be->state;
 		m->msec = be->time;
-		switch(be->button){
-		case 1:
-			s |= Button1Mask;
-			break;
-		case 2:
-			s |= Button2Mask;
-			break;
-		case 3:
-			s |= Button3Mask;
-			break;
-		case 4:
-			s |= Button4Mask;
-			break;
-		case 5:
-			s |= Button5Mask;
-			break;
-		}
+		m->buttons |= _xtoplan9buttons(be->button);
 		break;
 	case ButtonRelease:
 		be = (XButtonEvent*)e;
 		m->xy.x = be->x;
 		m->xy.y = be->y;
-		s = be->state;
 		m->msec = be->time;
-		switch(be->button){
-		case 1:
-			s &= ~Button1Mask;
-			break;
-		case 2:
-			s &= ~Button2Mask;
-			break;
-		case 3:
-			s &= ~Button3Mask;
-			break;
-		case 4:
-			s &= ~Button4Mask;
-			break;
-		case 5:
-			s &= ~Button5Mask;
-			break;
-		}
-		break;
+		m->buttons &= ~_xtoplan9buttons(be->button);
 
 	case MotionNotify:
 		me = (XMotionEvent*)e;
-		s = me->state;
 		m->xy.x = me->x;
 		m->xy.y = me->y;
 		m->msec = me->time;
@@ -1363,28 +1370,39 @@ _xtoplan9mouse(Xwin *w, XEvent *e, Mouse *m)
 	default:
 		return -1;
 	}
-
-	m->buttons = 0;
-	if(s & Button1Mask)
-		m->buttons |= 1;
-	if(s & Button2Mask)
-		m->buttons |= 2;
-	if(s & Button3Mask)
-		m->buttons |= 4;
-	if(s & Button4Mask)
-		m->buttons |= 8;
-	if(s & Button5Mask)
-		m->buttons |= 16;
 	return 0;
 }
 
 void
 rpc_setmouse(Client *client, Point p)
 {
+	static XCursor empty_cursor;
 	Xwin *w = (Xwin*)client->view;
 
 	xlock();
+	// XWayland hack - hide cursor before warping
+	// see https://github.com/libsdl-org/SDL/issues/9539
+	if(!empty_cursor){
+		Pixmap bm;
+		XColor black;
+		char bmd[] = { 0 };
+		bm = XCreateBitmapFromData(_x.display, w->drawable, bmd, 1, 1);
+		if(bm){
+			empty_cursor = XCreatePixmapCursor(_x.display, bm, bm, &black, &black, 0, 0);
+			XFreePixmap(_x.display, bm);
+		}
+	}
+
+	if(empty_cursor){
+		XDefineCursor(_x.display, w->drawable, empty_cursor);
+		XFlush(_x.display);
+	}
+
 	XWarpPointer(_x.display, None, w->drawable, 0, 0, 0, 0, p.x, p.y);
+
+	if(empty_cursor)
+		XDefineCursor(_x.display, w->drawable, _x.cursor);
+
 	XFlush(_x.display);
 	xunlock();
 }
@@ -1407,35 +1425,17 @@ revbyte(int b)
 }
 
 static void
-xcursorarrow(Xwin *w)
+_xsetcursor(Xwin *w, Cursor *c)
 {
-	if(_x.cursor != 0){
-		XFreeCursor(_x.display, _x.cursor);
-		_x.cursor = 0;
-	}
-	XUndefineCursor(_x.display, w->drawable);
-	XFlush(_x.display);
-}
-
-
-void
-rpc_setcursor(Client *client, Cursor *c, Cursor2 *c2)
-{
-	Xwin *w = (Xwin*)client->view;
 	XColor fg, bg;
 	XCursor xc;
 	Pixmap xsrc, xmask;
 	int i;
 	uchar src[2*16], mask[2*16];
 
-	USED(c2);
+	if(c == nil)
+		c = &bigarrow;
 
-	xlock();
-	if(c == nil){
-		xcursorarrow(w);
-		xunlock();
-		return;
-	}
 	for(i=0; i<2*16; i++){
 		src[i] = revbyte(c->set[i]);
 		mask[i] = revbyte(c->set[i] | c->clr[i]);
@@ -1446,7 +1446,7 @@ rpc_setcursor(Client *client, Cursor *c, Cursor2 *c2)
 	xsrc = XCreateBitmapFromData(_x.display, w->drawable, (char*)src, 16, 16);
 	xmask = XCreateBitmapFromData(_x.display, w->drawable, (char*)mask, 16, 16);
 	xc = XCreatePixmapCursor(_x.display, xsrc, xmask, &fg, &bg, -c->offset.x, -c->offset.y);
-	if(xc != 0) {
+	if(xc != 0){
 		XDefineCursor(_x.display, w->drawable, xc);
 		if(_x.cursor != 0)
 			XFreeCursor(_x.display, _x.cursor);
@@ -1455,14 +1455,22 @@ rpc_setcursor(Client *client, Cursor *c, Cursor2 *c2)
 	XFreePixmap(_x.display, xsrc);
 	XFreePixmap(_x.display, xmask);
 	XFlush(_x.display);
+}
+
+void
+rpc_setcursor(Client *client, Cursor *c, Cursor2 *c2)
+{
+	USED(c2);
+
+	xlock();
+	_xsetcursor((Xwin*)client->view, c);
 	xunlock();
 }
 
 struct {
 	QLock lk;
-	char buf[SnarfSize];
+	char *buf;
 #ifdef APPLESNARF
-	Rune rbuf[SnarfSize];
 	PasteboardRef apple;
 #endif
 } clip;
@@ -1504,7 +1512,7 @@ _xgetsnarffrom(Xwin *w, XWindow xw, Atom clipboard, Atom target, int timeout0, i
 
 	/* get the property */
 	xdata = nil;
-	XGetWindowProperty(_x.display, w->drawable, prop, 0, SnarfSize/sizeof(ulong), 0,
+	XGetWindowProperty(_x.display, w->drawable, prop, 0, (len+3)/4, 0,
 		AnyPropertyType, &type, &fmt, &len, &dummy, &xdata);
 	if((type != target && type != XA_STRING && type != _x.utf8string) || len == 0){
 		if(xdata)
@@ -1544,7 +1552,9 @@ rpc_getsnarf(void)
 	// TODO check more
 	if(xw == w->drawable){
 	mine:
-		data = (uchar*)strdup(clip.buf);
+		data = nil;
+		if(clip.buf != nil)
+			data = (uchar*)strdup(clip.buf);
 		goto out;
 	}
 
@@ -1583,12 +1593,11 @@ __xputsnarf(char *data)
 	XButtonEvent e;
 	Xwin *w;
 
-	if(strlen(data) >= SnarfSize)
-		return;
 	qlock(&clip.lk);
 	xlock();
 	w = _x.windows;
-	strcpy(clip.buf, data);
+	free(clip.buf);
+	clip.buf = strdup(data);
 	/* leave note for mouse proc to assert selection ownership */
 	_x.putsnarf++;
 
@@ -1628,12 +1637,17 @@ if(0) fprint(2, "xselect target=%d requestor=%d property=%d selection=%d (sizeof
 	|| xe->target == _x.utf8string
 	|| xe->target == _x.text
 	|| xe->target == _x.compoundtext
-	|| ((name = XGetAtomName(_x.display, xe->target)) && strcmp(name, "text/plain;charset=UTF-8") == 0)){
+	|| ((name = XGetAtomName(_x.display, xe->target)) && strcasecmp(name, "text/plain;charset=UTF-8") == 0)){
 		/* text/plain;charset=UTF-8 seems nonstandard but is used by Synergy */
+		/* text/plain;charset=utf-8 is used by xfce4-terminal 1.0.4 */
 		/* if the target is STRING we're supposed to reply with Latin1 XXX */
 		qlock(&clip.lk);
-		XChangeProperty(_x.display, xe->requestor, xe->property, xe->target,
-			8, PropModeReplace, (uchar*)clip.buf, strlen(clip.buf));
+		if(clip.buf)
+			XChangeProperty(_x.display, xe->requestor, xe->property, xe->target,
+				8, PropModeReplace, (uchar*)clip.buf, strlen(clip.buf));
+		else
+			XChangeProperty(_x.display, xe->requestor, xe->property, xe->target,
+				8, PropModeReplace, (uchar*)"", 0);
 		qunlock(&clip.lk);
 	}else{
 		if(strcmp(name, "TIMESTAMP") != 0)
@@ -1679,7 +1693,9 @@ _applegetsnarf(void)
 	}
 	flags = PasteboardSynchronize(clip.apple);
 	if(flags&kPasteboardClientIsOwner){
-		s = strdup(clip.buf);
+		s = nil;
+		if(clip.buf != nil)
+			s = strdup(clip.buf);
 		qunlock(&clip.lk);
 		return s;
 	}
@@ -1721,14 +1737,21 @@ _appleputsnarf(char *s)
 {
 	CFDataRef cfdata;
 	PasteboardSyncFlags flags;
+	Rune *r;
+	int n;
 
 /*	fprint(2, "appleputsnarf\n"); */
 
-	if(strlen(s) >= SnarfSize)
-		return;
 	qlock(&clip.lk);
-	strcpy(clip.buf, s);
-	runesnprint(clip.rbuf, nelem(clip.rbuf), "%s", s);
+	free(clip.buf);
+	clip.buf = strdup(s);
+	n = utflen(s) + 1;
+	r = malloc(n * sizeof(Rune));
+	if(r == nil){
+		qunlock(&clip.lk);
+		return;
+	}
+	runesnprint(r, n, "%s", s);
 	if(clip.apple == nil){
 		if(PasteboardCreate(kPasteboardClipboard, &clip.apple) != noErr){
 			fprint(2, "apple pasteboard create failed\n");
@@ -1738,17 +1761,20 @@ _appleputsnarf(char *s)
 	}
 	if(PasteboardClear(clip.apple) != noErr){
 		fprint(2, "apple pasteboard clear failed\n");
+		free(r);
 		qunlock(&clip.lk);
 		return;
 	}
 	flags = PasteboardSynchronize(clip.apple);
 	if((flags&kPasteboardModified) || !(flags&kPasteboardClientIsOwner)){
 		fprint(2, "apple pasteboard cannot assert ownership\n");
+		free(r);
 		qunlock(&clip.lk);
 		return;
 	}
 	cfdata = CFDataCreate(kCFAllocatorDefault,
-		(uchar*)clip.rbuf, runestrlen(clip.rbuf)*2);
+		(uchar*)r, runestrlen(r)*2);
+	free(r);
 	if(cfdata == nil){
 		fprint(2, "apple pasteboard cfdatacreate failed\n");
 		qunlock(&clip.lk);
