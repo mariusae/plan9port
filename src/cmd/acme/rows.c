@@ -475,12 +475,12 @@ rowdump(Row *row, char *file)
 	tmp = nil;
 	buf = nil;
 	if(file == nil){
-		if(home == nil){
+		if(acmehome == nil){
 			warning(nil, "can't find file for dump: $home not defined\n");
 			goto Rescue;
 		}
 		buf = fbufalloc();
-		sprint(buf, "%s/acme.dump", home);
+		sprint(buf, "%s/acme.dump", acmehome);
 		file = buf;
 	}
 	tmp = smprint("%s.XXXXXX", file);
@@ -572,11 +572,11 @@ rowload(Row *row, char *file, int initing)
 
 	buf = fbufalloc();
 	if(file == nil){
-		if(home == nil){
+		if(acmehome == nil){
 			warning(nil, "can't find file for load: $home not defined\n");
 			goto Rescue1;
 		}
-		sprint(buf, "%s/acme.dump", home);
+		sprint(buf, "%s/acme.dump", acmehome);
 		file = buf;
 	}
 	b = Bopen(file, OREAD);
@@ -695,11 +695,11 @@ rowload(Row *row, char *file, int initing)
 				goto Rescue2;
 			l[Blinelen(b)-1] = 0;
 			if(*l == '\0'){
-				if(home == nil)
+				if(acmehome == nil)
 					r = bytetorune("./", &nr);
 				else{
-					t = emalloc(strlen(home)+1+1);
-					sprint(t, "%s/", home);
+					t = emalloc(strlen(acmehome)+1+1);
+					sprint(t, "%s/", acmehome);
 					r = bytetorune(t, &nr);
 					free(t);
 				}

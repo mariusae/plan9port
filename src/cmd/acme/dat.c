@@ -40,7 +40,7 @@ Rectangle		nullrect;
 int			fsyspid;
 char			*cputype;
 char			*objtype;
-char			*home;
+char			*acmehome;
 char			*acmeshell;
 //char			*fontnames[2];
 extern char		wdir[]; /* must use extern because no dimension given */
