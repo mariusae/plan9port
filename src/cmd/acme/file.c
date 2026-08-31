@@ -290,6 +290,8 @@ filereset(File *f)
 void
 fileclose(File *f)
 {
+	if(f->ntext > 0 && f->text[0] != nil && f->text[0]->w != nil)
+		watchstop(f->text[0]->w);
 	free(f->name);
 	f->nname = 0;
 	f->name = nil;

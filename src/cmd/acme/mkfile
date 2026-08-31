@@ -27,6 +27,8 @@ OFILES=\
 	vcomplete.$O\
 	vfs.$O\
 	vproc.$O\
+	watch.$O\
+	$SYSNAME.$O\
 	wind.$O\
 	xfid.$O\
 

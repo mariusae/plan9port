@@ -257,6 +257,7 @@ threadmain(int argc, char *argv[])
 	cedit = chancreate(sizeof(int), 0);
 	cexit = chancreate(sizeof(int), 0);
 	cwarn = chancreate(sizeof(void*), 1);
+	cwatch = chancreate(sizeof(char*), 0);
 	if(cvwait==nil || ccommand==nil || ckill==nil || cxfidalloc==nil || cxfidfree==nil || cerr==nil || cexit==nil || cwarn==nil){
 		fprint(2, "acme: can't create initial channels: %r\n");
 		threadexitsall("channels");
@@ -271,6 +272,7 @@ threadmain(int argc, char *argv[])
 	chansetname(cedit, "cedit");
 	chansetname(cexit, "cexit");
 	chansetname(cwarn, "cwarn");
+	chansetname(cwatch, "cwatch");
 
 	mousectl = initmouse(nil, screen);
 	if(mousectl == nil){
@@ -333,6 +335,7 @@ threadmain(int argc, char *argv[])
 	flushimage(display, 1);
 
 	acmeerrorinit();
+	watchinit();
 	threadcreate(keyboardthread, nil, STACK);
 	threadcreate(mousethread, nil, STACK);
 	threadcreate(waitthread, nil, STACK);
@@ -603,7 +606,8 @@ mousethread(void *v)
 	Plumbmsg *pm;
 	Mouse m;
 	char *act;
-	enum { MResize, MMouse, MPlumb, MWarnings, NMALT };
+	char *wpath;
+	enum { MResize, MMouse, MPlumb, MWarnings, MWatch, NMALT };
 	enum { Shift = 5 };
 	static Alt alts[NMALT+1];
 
@@ -621,8 +625,13 @@ mousethread(void *v)
 	alts[MWarnings].c = cwarn;
 	alts[MWarnings].v = nil;
 	alts[MWarnings].op = CHANRCV;
+	alts[MWatch].c = cwatch;
+	alts[MWatch].v = &wpath;
+	alts[MWatch].op = CHANRCV;
 	if(cplumb == nil)
 		alts[MPlumb].op = CHANNOP;
+	if(cwatch == nil)
+		alts[MWatch].op = CHANNOP;
 	alts[NMALT].op = CHANEND;
 
 	for(;;){
@@ -650,6 +659,12 @@ mousethread(void *v)
 			plumbfree(pm);
 			break;
 		case MWarnings:
+			break;
+		case MWatch:
+			qlock(&row.lk);
+			processwatch(wpath);
+			qunlock(&row.lk);
+			free(wpath);
 			break;
 		case MMouse:
 			/*
@@ -1163,6 +1178,7 @@ iconinit(void)
 	if(button){
 		freeimage(button);
 		freeimage(modbutton);
+		freeimage(extmodbutton);
 		freeimage(colbutton);
 	}
 
@@ -1177,6 +1193,15 @@ iconinit(void)
 	r = insetrect(r, ButtonBorder);
 	tmp = allocimage(display, Rect(0,0,1,1), screen->chan, 1, DMedblue);
 	draw(modbutton, r, tmp, nil, ZP);
+	freeimage(tmp);
+
+	r = button->r;
+	extmodbutton = allocimage(display, r, screen->chan, 0, DNofill);
+	draw(extmodbutton, r, tagcols[BACK], nil, r.min);
+	border(extmodbutton, r, ButtonBorder, tagcols[BORD], ZP);
+	r = insetrect(r, ButtonBorder);
+	tmp = allocimage(display, Rect(0,0,1,1), screen->chan, 1, 0xFF6600FF);	/* orange */
+	draw(extmodbutton, r, tmp, nil, ZP);
 	freeimage(tmp);
 
 	r = button->r;

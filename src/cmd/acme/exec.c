@@ -646,6 +646,8 @@ get(Text *et, Text *t, Text *argt, int flag1, int _0, Rune *arg, int narg)
 	}
 	for(i=0; i<t->file->ntext; i++)
 		t->file->text[i]->w->dirty = dirty;
+	for(i=0; i<t->file->ntext; i++)
+		t->file->text[i]->w->extmod = 0;
 	free(name);
 	free(r);
 	winsettag(w);
@@ -813,6 +815,7 @@ putfile(File *f, int q0, int q1, Rune *namer, int nname)
 		for(i=0; i<f->ntext; i++){
 			f->text[i]->w->putseq = f->seq;
 			f->text[i]->w->dirty = w->dirty;
+			f->text[i]->w->extmod = 0;
 		}
 	}
 	fbuffree(s);

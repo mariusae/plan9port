@@ -314,6 +314,8 @@ textload(Text *t, uint q0, char *file, int setqid)
 	if(nulls)
 		warning(nil, "%s: NUL bytes elided\n", file);
 	free(d);
+	if(setqid && t->w != nil && !t->w->isdir && !t->w->isscratch)
+		watchstart(t->w, file);
 	return q1-q0;
 
     Rescue:

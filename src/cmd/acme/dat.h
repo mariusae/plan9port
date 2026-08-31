@@ -249,6 +249,7 @@ struct Window
 	uchar	isscratch;
 	uchar	filemenu;
 	uchar	dirty;
+	uchar	extmod;		/* file modified externally */
 	uchar	autoindent;
 	uchar	showdel;
 	int		id;
@@ -294,6 +295,7 @@ void	winundo(Window*, int);
 void	winsetname(Window*, Rune*, int);
 void	winsettag(Window*);
 void	winsettag1(Window*);
+void	windrawbutton(Window*);
 void	wincommit(Window*, Text*);
 int	winresize(Window*, Rectangle, int, int);
 void	winclose(Window*);
@@ -602,6 +604,7 @@ Mousectl		*mousectl;
 Keyboardctl	*keyboardctl;
 Reffont		reffont;
 Image		*modbutton;
+Image		*extmodbutton;
 Image		*colbutton;
 Image		*button;
 Image		*but2col;
@@ -659,6 +662,7 @@ Channel	*cexit;		/* chan(int) */
 Channel	*cerr;		/* chan(char*) */
 Channel	*cedit;		/* chan(int) */
 Channel	*cwarn;		/* chan(void*)[1] (really chan(unit)[1]) */
+Channel	*cwatch;	/* chan(char*) - file change notifications */
 
 QLock	editoutlk;
 
